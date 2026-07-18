@@ -16,5 +16,9 @@ fn main() -> Result<()> {
     let id = printer.get_device_id()?;
     println!("Device ID: {id}");
 
+    println!("Requesting tape info (raw)...");
+    let raw = printer.get_tape_info_raw()?;
+    println!("Tape info raw bytes: {raw:02x?}");
+
     Ok(())
 }

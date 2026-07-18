@@ -101,6 +101,63 @@ a status-monitoring utility polls tape presence through some other
 mechanism entirely unrelated to submitting the job), but is not
 required to print.
 
+### 1.5 Detecting tape width
+
+The TEPRA desktop app has a "detect tape width" feature that queries
+the printer for the currently loaded tape's width, rather than relying
+on the user to select it manually. This is a single vendor-specific
+USB control transfer, captured via USBPcap on Windows
+(`captures/obtain-tape-width.pcap`) and confirmed against real
+hardware for three tape widths:
+
+```
+bmRequestType = 0xC1  (Device-to-Host, Vendor, Interface)
+bRequest      = 0x01
+wValue        = 0x0000
+wIndex        = 0x0000
+wLength       = 8
+```
+
+The response is always 8 bytes long. Byte 3 (0-indexed) is a tape
+width *index*, not the width in mm directly:
+
+| Tape loaded | Response bytes (hex)      | Byte 3 (index) |
+|------------:|----------------------------|:---------------:|
+| 6mm         | `08 00 00 01 00 00 00 00`  | 1                |
+| 12mm        | `08 00 00 03 00 00 00 00`  | 3                |
+| 18mm        | `08 00 00 04 00 00 00 00`  | 4                |
+
+These three index values (1, 3, 4) match exactly the position of each
+width in KING JIM's official TEPRA tape width lineup for this printer
+line, `[4, 6, 9, 12, 18, 24, 36, 50]` mm (0-indexed: 4mm→0, 6mm→1,
+9mm→2, 12mm→3, 18mm→4, 24mm→5, 36mm→6, 50mm→7; per KING JIM's product
+site). This strongly suggests the full mapping is:
+
+| Index | Tape width |
+|:-----:|-----------:|
+| 0     | 4mm        |
+| 1     | 6mm        |
+| 2     | 9mm        |
+| 3     | 12mm       |
+| 4     | 18mm       |
+| 5     | 24mm       |
+| 6     | 36mm       |
+| 7     | 50mm       |
+
+Indices 0, 2, 5, 6, and 7 (4mm, 9mm, 24mm, 36mm, 50mm) are
+extrapolated from the lineup pattern and have **not** been confirmed
+against real hardware or a capture — only 6mm, 12mm, and 18mm are
+verified (which also happen to be the only three widths this crate's
+`TapeWidth` currently implements end-to-end, i.e. with known
+`width_byte`/`aux_byte`/raster parameters from section 3).
+
+The meaning of the other 7 bytes in the response (always `08 00 00
+<idx> 00 00 00 00` in every observed sample) is unknown; byte 0 (`08`)
+is constant and does not vary with tape width, and might just be an
+echo of `wLength`. No sample with no tape loaded at all has been
+captured, so it's unknown whether/how that case is distinguished from
+a real width index.
+
 ## 2. Job byte stream format
 
 A complete print job is a flat byte stream with four parts, back to

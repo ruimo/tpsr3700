@@ -20,21 +20,22 @@ const TRAILING_BYTE: u8 = 0x0C;
 
 /// Builds a complete print job byte stream from raster rows.
 ///
-/// `rows` is a sequence of bitmaps, each exactly
-/// `tape.bitmap_bytes()` long, one per raster column, in print order. This
-/// corresponds 1:1 to the rows produced by [`crate::font`] rendering.
+/// `rows` is the full sequence of raster row bitmaps to send, in order,
+/// each exactly `tape.bitmap_bytes()` long — this includes any leading or
+/// trailing blank (all-zero) rows the caller wants sent (e.g. tape feed
+/// margin; see [`crate::font::FontRenderer::render_text`]), not just the
+/// "inked" content. `rows.len()` becomes the `L` command's value
+/// directly.
 ///
-/// `char_count` is the number of characters/glyphs being printed (used for
-/// a still not-fully-understood header field that scales with it; see
+/// `char_count` is the number of characters/glyphs being printed (used
+/// for a still not-fully-understood header field that scales with it; see
 /// [`crate::tepra::header`]).
 ///
-/// `margin_rows` is the number of leading blank rows before content
-/// starts (encoded in the `T` command); it is the offset of the first
-/// non-blank row in `rows`, or `0` if there is no leading margin to
-/// declare separately (the caller may also just include blank rows in
-/// `rows` and pass `0` here — both produce equivalent bitmaps, but to
-/// exactly match the vendor driver's output, `margin_rows` should equal
-/// the index of the first non-all-zero row).
+/// `margin_rows` is the number of leading blank rows in `rows` before
+/// content starts (encoded in the `T` command). This is *not* computed
+/// automatically from `rows`, since an all-zero row is ambiguous between
+/// "blank feed margin" and "a gap between glyphs" — the caller must track
+/// and pass this explicitly.
 pub fn build_print_job(
     tape: TapeWidth,
     char_count: u32,

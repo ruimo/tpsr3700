@@ -89,7 +89,25 @@ impl Printer {
         let endpoint_out = endpoint_out.context("no bulk OUT endpoint found")?;
         let endpoint_in = endpoint_in.context("no bulk IN endpoint found")?;
 
-        let handle = device.open()?;
+        let handle = device.open().context(
+            "failed to open the printer's USB device (permission denied?)\n\n\
+             This usually means your user doesn't have permission to access the\n\
+             printer's USB device node. Try one of:\n\
+             \n\
+             1. Add your user to the `lp` group and start a new login session\n\
+             (log out/in, or run `newgrp lp` in a new shell):\n\
+             \n\
+             \x20   sudo usermod -aG lp $USER\n\
+             \n\
+             2. Or, run this command with a group override for the current\n\
+             shell only (no logout required):\n\
+             \n\
+             \x20   sg lp -c '<the command you just ran>'\n\
+             \n\
+             3. Or, run as root (not recommended for routine use):\n\
+             \n\
+             \x20   sudo <the command you just ran>",
+        )?;
 
         // The printer's interface is normally bound to the kernel's
         // `usblp` driver (it advertises USB Printer class 7/1/2), which
@@ -128,6 +146,49 @@ impl Printer {
         // class spec; skip them if present and just decode what we can.
         let text = if n >= 2 { &buf[2..n] } else { &buf[..n] };
         Ok(String::from_utf8_lossy(text).into_owned())
+    }
+
+    /// Vendor-specific control request (`bmRequestType=0xC1`,
+    /// `bRequest=0x01`, `wValue=0`, `wIndex=0`, `wLength=8`) observed being
+    /// sent by the TEPRA desktop app's "detect tape width" feature
+    /// (captured via USBPcap on Windows). Returns the raw 8-byte response.
+    ///
+    /// The exact encoding of the response is not fully understood yet; see
+    /// `docs/protocol.md` for analysis notes.
+    pub fn get_tape_info_raw(&self) -> Result<[u8; 8]> {
+        let mut buf = [0u8; 8];
+        let n = self
+            .handle
+            .read_control(0xC1, 0x01, 0, 0, &mut buf, Duration::from_secs(3))
+            .context("tape info control request failed")?;
+        if n != 8 {
+            bail!("unexpected response length: got {n} bytes, expected 8");
+        }
+        Ok(buf)
+    }
+
+    /// Detects the currently loaded tape's width by querying the printer
+    /// (see [`Printer::get_tape_info_raw`]) and decoding the tape width
+    /// index in byte 3 of the response via
+    /// [`crate::tepra::TapeWidth::from_detected_index`].
+    ///
+    /// Returns `Ok(None)` if the printer reports a tape width index that
+    /// isn't currently supported by this crate (see
+    /// `TapeWidth::from_detected_index`'s docs for which indices those
+    /// are), along with the raw index value for diagnostics.
+    pub fn get_tape_width(&self) -> Result<Option<crate::tepra::TapeWidth>> {
+        let raw = self.get_tape_info_raw()?;
+        let index = raw[3];
+        Ok(crate::tepra::TapeWidth::from_detected_index(index))
+    }
+
+    /// Same as [`Printer::get_tape_width`], but also returns the raw
+    /// detected index (useful for diagnostics/error messages when the
+    /// index isn't a currently-supported width).
+    pub fn get_tape_width_with_index(&self) -> Result<(Option<crate::tepra::TapeWidth>, u8)> {
+        let raw = self.get_tape_info_raw()?;
+        let index = raw[3];
+        Ok((crate::tepra::TapeWidth::from_detected_index(index), index))
     }
 
     /// Sends a raw TEPRA print job byte stream directly to the printer's

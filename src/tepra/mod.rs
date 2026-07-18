@@ -68,6 +68,27 @@ impl TapeWidth {
     pub fn bitmap_bits(self) -> usize {
         self.width_byte() as usize + 8
     }
+
+    /// Converts a tape width index, as returned by the printer's
+    /// "detect tape width" vendor control request (byte 3 of the
+    /// response; see [`crate::usb::Printer::get_tape_info_raw`] and
+    /// `docs/protocol.md` section 1.5), into a [`TapeWidth`].
+    ///
+    /// Only indices 1 (6mm), 3 (12mm), and 4 (18mm) have been confirmed
+    /// against real hardware. Indices 0, 2, 5, 6, and 7 are extrapolated
+    /// from KING JIM's official tape width lineup for this printer line
+    /// (4/6/9/12/18/24/36/50mm) but are not currently representable as a
+    /// [`TapeWidth`] (only 6/12/18mm are implemented elsewhere in this
+    /// crate), so they return `None` here too, pending support for those
+    /// widths.
+    pub fn from_detected_index(index: u8) -> Option<Self> {
+        match index {
+            1 => Some(TapeWidth::Mm6),
+            3 => Some(TapeWidth::Mm12),
+            4 => Some(TapeWidth::Mm18),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -86,5 +107,23 @@ mod tests {
         assert_eq!(TapeWidth::Mm6.bitmap_bytes(), 8);
         assert_eq!(TapeWidth::Mm12.bitmap_bytes(), 15);
         assert_eq!(TapeWidth::Mm18.bitmap_bytes(), 22);
+    }
+
+    #[test]
+    fn from_detected_index_matches_hardware() {
+        // Confirmed against real hardware with 6mm/12mm/18mm tapes loaded
+        // (see docs/protocol.md section 1.5).
+        assert_eq!(TapeWidth::from_detected_index(1), Some(TapeWidth::Mm6));
+        assert_eq!(TapeWidth::from_detected_index(3), Some(TapeWidth::Mm12));
+        assert_eq!(TapeWidth::from_detected_index(4), Some(TapeWidth::Mm18));
+    }
+
+    #[test]
+    fn from_detected_index_rejects_unsupported_widths() {
+        // Indices 0 (4mm), 2 (9mm), 5 (24mm), 6 (36mm), 7 (50mm) are not
+        // yet implemented.
+        for index in [0, 2, 5, 6, 7] {
+            assert_eq!(TapeWidth::from_detected_index(index), None);
+        }
     }
 }
