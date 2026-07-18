@@ -1,0 +1,10 @@
+[package]
+name = "tpsr3700"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fontdue = "0.9"
+rusb = "0.9"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
