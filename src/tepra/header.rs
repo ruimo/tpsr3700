@@ -79,6 +79,13 @@ mod tests {
     }
 
     #[test]
+    fn matches_captured_12mm_header() {
+        let expected = include_bytes!("../../tests/fixtures/a-12mm.prn");
+        let header = build_header(TapeWidth::Mm12, 1);
+        assert_eq!(header.as_slice(), &expected[..header.len()]);
+    }
+
+    #[test]
     fn matches_captured_two_char_header() {
         let expected = include_bytes!("../../tests/fixtures/aa.prn");
         let header = build_header(TapeWidth::Mm18, 2);

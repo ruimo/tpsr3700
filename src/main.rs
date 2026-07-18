@@ -12,7 +12,7 @@ struct Args {
     /// Text to print.
     text: String,
 
-    /// Tape width in millimeters (only 6 and 18 are currently supported).
+    /// Tape width in millimeters (6, 12, and 18 are currently supported).
     #[arg(long, default_value_t = 18)]
     tape_mm: u8,
 
@@ -42,8 +42,11 @@ fn main() -> Result<()> {
 
     let tape = match args.tape_mm {
         6 => TapeWidth::Mm6,
+        12 => TapeWidth::Mm12,
         18 => TapeWidth::Mm18,
-        other => anyhow::bail!("unsupported tape width: {other}mm (only 6 and 18 are supported)"),
+        other => {
+            anyhow::bail!("unsupported tape width: {other}mm (only 6, 12, and 18 are supported)")
+        }
     };
 
     let renderer = FontRenderer::load(&args.font)?;

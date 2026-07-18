@@ -145,4 +145,12 @@ mod tests {
         let job = build_print_job(TapeWidth::Mm6, 1, &rows, margin);
         assert_eq!(job, expected);
     }
+
+    #[test]
+    fn rebuilds_a_12mm_prn_exactly() {
+        let expected = include_bytes!("../../tests/fixtures/a-12mm.prn").to_vec();
+        let (rows, margin) = extract_rows(&expected, TapeWidth::Mm12);
+        let job = build_print_job(TapeWidth::Mm12, 1, &rows, margin);
+        assert_eq!(job, expected);
+    }
 }

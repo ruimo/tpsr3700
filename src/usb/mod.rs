@@ -1,15 +1,24 @@
-//! USB transport: sends a TEPRA print job to the printer over USB Mass
-//! Storage's Bulk-Only Transport (BOT), which is the protocol the printer
-//! actually speaks (it enumerates as a USB Mass Storage device to the
-//! host).
+//! USB transport: sends a TEPRA print job to the printer over its USB
+//! Printer-class bulk endpoints.
 //!
-//! This module is a work-in-progress skeleton. The `TEST UNIT READY` /
-//! `REQUEST SENSE` polling sequence has been observed in a USBPcap capture
-//! of the Windows driver; the exact SCSI command used to transmit the
-//! actual print data (presumably a vendor-specific `WRITE`-like command)
-//! has not been captured yet and needs to be determined empirically
-//! against real hardware (e.g. with `usbmon` on Linux) before this module
-//! can drive a real printer end-to-end.
+//! Despite Windows' USBPcap capture showing what looked like a USB Mass
+//! Storage Bulk-Only Transport exchange (`USBC`/`USBS` signatures used for
+//! `TEST UNIT READY` / `REQUEST SENSE` polling), the device's USB
+//! descriptors advertise a standard USB Printer class interface
+//! (bInterfaceClass=7, bInterfaceSubClass=1, bInterfaceProtocol=2
+//! "Bidirectional"), and `GET_DEVICE_ID` confirms this:
+//!
+//! ```text
+//! <MFG:KING JIM;CMD:ESCPL2;MDL:TEPRA PRO SR3700P;CLS:PRINTER;
+//! ```
+//!
+//! Empirically, sending the raw TEPRA job bytes (see [`crate::tepra`])
+//! directly to the bulk OUT endpoint — with no Mass Storage command
+//! wrapping at all — is sufficient to print. The BOT-like exchange seen in
+//! the Windows capture appears to be either a red herring (from an
+//! entirely different, coincidentally similar looking sequence) or
+//! optional status-polling behavior that isn't required for the printer
+//! to accept a job.
 
 use anyhow::{bail, Context, Result};
 use rusb::{Device, DeviceHandle, GlobalContext};
@@ -17,48 +26,13 @@ use std::time::Duration;
 
 /// KING JIM TEPRA SR3700P's USB vendor ID.
 ///
-/// TODO: confirm against `lsusb -v` output from real hardware; this is a
-/// placeholder until verified.
-pub const VENDOR_ID: u16 = 0x0000;
+/// Confirmed via `lsusb`: `ID 0d8a:0103 King Jim Co., Ltd SR3700P`.
+pub const VENDOR_ID: u16 = 0x0d8a;
 
 /// KING JIM TEPRA SR3700P's USB product ID.
 ///
-/// TODO: confirm against `lsusb -v` output from real hardware; this is a
-/// placeholder until verified.
-pub const PRODUCT_ID: u16 = 0x0000;
-
-const CBW_SIGNATURE: u32 = 0x4342_5355; // "USBC" little-endian
-const CSW_SIGNATURE: u32 = 0x5342_5355; // "USBS" little-endian
-const CBW_LEN: usize = 31;
-const CSW_LEN: usize = 13;
-
-/// A Command Block Wrapper, as used by USB Mass Storage's Bulk-Only
-/// Transport.
-struct Cbw {
-    tag: u32,
-    data_transfer_length: u32,
-    flags: u8,
-    lun: u8,
-    command: Vec<u8>,
-}
-
-impl Cbw {
-    fn to_bytes(&self) -> [u8; CBW_LEN] {
-        let mut buf = [0u8; CBW_LEN];
-        buf[0..4].copy_from_slice(&CBW_SIGNATURE.to_le_bytes());
-        buf[4..8].copy_from_slice(&self.tag.to_le_bytes());
-        buf[8..12].copy_from_slice(&self.data_transfer_length.to_le_bytes());
-        buf[12] = self.flags;
-        buf[13] = self.lun;
-        buf[14] = self.command.len() as u8;
-        buf[15..15 + self.command.len()].copy_from_slice(&self.command);
-        buf
-    }
-}
-
-/// Direction flag for [`Cbw::flags`].
-const CBW_FLAGS_DATA_IN: u8 = 0x80;
-const CBW_FLAGS_DATA_OUT: u8 = 0x00;
+/// Confirmed via `lsusb`: `ID 0d8a:0103 King Jim Co., Ltd SR3700P`.
+pub const PRODUCT_ID: u16 = 0x0103;
 
 /// Finds the TEPRA SR3700P on the USB bus.
 pub fn find_device() -> Result<Device<GlobalContext>> {
@@ -76,16 +50,16 @@ pub fn find_device() -> Result<Device<GlobalContext>> {
     );
 }
 
-/// An open connection to the printer's Mass Storage bulk endpoints.
+/// An open connection to the printer's bulk endpoints.
 pub struct Printer {
     handle: DeviceHandle<GlobalContext>,
     endpoint_out: u8,
+    #[allow(dead_code)]
     endpoint_in: u8,
-    next_tag: u32,
 }
 
 impl Printer {
-    /// Open the printer and claim its Mass Storage interface.
+    /// Open the printer and claim its Printer-class interface.
     pub fn open() -> Result<Self> {
         let device = find_device()?;
         let config = device.active_config_descriptor()?;
@@ -116,161 +90,59 @@ impl Printer {
         let endpoint_in = endpoint_in.context("no bulk IN endpoint found")?;
 
         let handle = device.open()?;
+
+        // The printer's interface is normally bound to the kernel's
+        // `usblp` driver (it advertises USB Printer class 7/1/2), which
+        // would otherwise make `claim_interface` fail with "Resource
+        // busy". Ask libusb to detach it automatically while we hold the
+        // interface, and reattach it when the handle is dropped.
+        handle
+            .set_auto_detach_kernel_driver(true)
+            .context("failed to enable kernel driver auto-detach")?;
+
         handle.claim_interface(interface.number())?;
 
         Ok(Self {
             handle,
             endpoint_out,
             endpoint_in,
-            next_tag: 1,
         })
     }
 
-    fn next_tag(&mut self) -> u32 {
-        let tag = self.next_tag;
-        self.next_tag = self.next_tag.wrapping_add(1);
-        tag
+    /// Returns the (OUT, IN) bulk endpoint addresses in use. Exposed for
+    /// diagnostics.
+    pub fn endpoints(&self) -> (u8, u8) {
+        (self.endpoint_out, self.endpoint_in)
     }
 
-    /// Sends a single SCSI command with no data phase, and returns the
-    /// resulting command status (0 = success).
-    fn send_command_no_data(&mut self, lun: u8, command: &[u8]) -> Result<u8> {
-        let tag = self.next_tag();
-        let cbw = Cbw {
-            tag,
-            data_transfer_length: 0,
-            flags: CBW_FLAGS_DATA_OUT,
-            lun,
-            command: command.to_vec(),
-        };
-        self.write_bulk(&cbw.to_bytes())?;
-        self.read_csw(tag)
-    }
-
-    /// Sends a SCSI command followed by an OUT data phase.
-    fn send_command_with_data_out(&mut self, lun: u8, command: &[u8], data: &[u8]) -> Result<u8> {
-        let tag = self.next_tag();
-        let cbw = Cbw {
-            tag,
-            data_transfer_length: data.len() as u32,
-            flags: CBW_FLAGS_DATA_OUT,
-            lun,
-            command: command.to_vec(),
-        };
-        self.write_bulk(&cbw.to_bytes())?;
-        self.write_bulk(data)?;
-        self.read_csw(tag)
-    }
-
-    /// Sends a SCSI command with an IN data phase, returning the received
-    /// data along with the command status.
-    fn send_command_with_data_in(
-        &mut self,
-        lun: u8,
-        command: &[u8],
-        expected_len: usize,
-    ) -> Result<(Vec<u8>, u8)> {
-        let tag = self.next_tag();
-        let cbw = Cbw {
-            tag,
-            data_transfer_length: expected_len as u32,
-            flags: CBW_FLAGS_DATA_IN,
-            lun,
-            command: command.to_vec(),
-        };
-        self.write_bulk(&cbw.to_bytes())?;
-        let data = self.read_bulk(expected_len)?;
-        let status = self.read_csw(tag)?;
-        Ok((data, status))
-    }
-
-    fn write_bulk(&mut self, data: &[u8]) -> Result<()> {
-        self.handle
-            .write_bulk(self.endpoint_out, data, Duration::from_secs(5))
-            .context("bulk OUT transfer failed")?;
-        Ok(())
-    }
-
-    fn read_bulk(&mut self, len: usize) -> Result<Vec<u8>> {
-        let mut buf = vec![0u8; len];
+    /// USB Printer class `GET_DEVICE_ID` request (bRequest=0). Returns the
+    /// device ID string (e.g.
+    /// `<MFG:KING JIM;CMD:ESCPL2;MDL:TEPRA PRO SR3700P;CLS:PRINTER;`).
+    pub fn get_device_id(&self) -> Result<String> {
+        let mut buf = [0u8; 256];
         let n = self
             .handle
-            .read_bulk(self.endpoint_in, &mut buf, Duration::from_secs(5))
-            .context("bulk IN transfer failed")?;
-        buf.truncate(n);
-        Ok(buf)
+            .read_control(0xA1, 0, 0, 0, &mut buf, Duration::from_secs(3))
+            .context("GET_DEVICE_ID control request failed")?;
+        // First 2 bytes are a big-endian length prefix per the USB Printer
+        // class spec; skip them if present and just decode what we can.
+        let text = if n >= 2 { &buf[2..n] } else { &buf[..n] };
+        Ok(String::from_utf8_lossy(text).into_owned())
     }
 
-    fn read_csw(&mut self, expected_tag: u32) -> Result<u8> {
-        let buf = self.read_bulk(CSW_LEN)?;
-        if buf.len() < CSW_LEN {
-            bail!("short CSW: got {} bytes, expected {}", buf.len(), CSW_LEN);
-        }
-        let signature = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-        let tag = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-        let status = buf[12];
-        if signature != CSW_SIGNATURE {
-            bail!("bad CSW signature: {:#010x}", signature);
-        }
-        if tag != expected_tag {
-            bail!("CSW tag mismatch: expected {:#010x}, got {:#010x}", expected_tag, tag);
-        }
-        Ok(status)
-    }
-
-    /// SCSI `TEST UNIT READY` (opcode 0x00).
-    pub fn test_unit_ready(&mut self) -> Result<u8> {
-        self.send_command_no_data(0, &[0x00, 0, 0, 0, 0, 0])
-    }
-
-    /// SCSI `REQUEST SENSE` (opcode 0x03). Returns the raw sense data.
-    pub fn request_sense(&mut self) -> Result<Vec<u8>> {
-        let command = [0x03, 0, 0, 0, 18, 0];
-        let (data, _status) = self.send_command_with_data_in(0, &command, 18)?;
-        Ok(data)
-    }
-
-    /// Polls `TEST UNIT READY` until the printer reports ready (tape
-    /// loaded), or the timeout elapses.
-    pub fn wait_until_ready(&mut self, timeout: Duration) -> Result<()> {
-        let start = std::time::Instant::now();
-        loop {
-            if self.test_unit_ready()? == 0 {
-                return Ok(());
-            }
-            let _sense = self.request_sense()?;
-            if start.elapsed() > timeout {
-                bail!("timed out waiting for printer to become ready (tape not loaded?)");
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    }
-
-    /// Sends a raw TEPRA print job byte stream to the printer.
-    ///
-    /// TODO: the exact SCSI command opcode/parameters used by the vendor
-    /// driver to transmit print data have not been captured yet (see
-    /// module docs). This is a placeholder using SCSI `WRITE(10)`
-    /// (opcode 0x2A) with LBA=0, which is *not* confirmed to work with
-    /// this printer and will likely need adjustment once verified against
-    /// real hardware traffic.
+    /// Sends a raw TEPRA print job byte stream directly to the printer's
+    /// bulk OUT endpoint, with no additional framing.
     pub fn send_job(&mut self, job: &[u8]) -> Result<()> {
-        self.wait_until_ready(Duration::from_secs(10))?;
-
-        // Placeholder SCSI WRITE(10): opcode, flags, LBA(4), group(1),
-        // transfer length in blocks(2), control(1). Block size and LBA
-        // semantics are not yet confirmed for this device.
-        let block_size = 512usize;
-        let blocks = job.len().div_ceil(block_size) as u16;
-        let mut command = vec![0x2A, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        command[7..9].copy_from_slice(&blocks.to_be_bytes());
-
-        let mut padded = job.to_vec();
-        padded.resize(blocks as usize * block_size, 0);
-
-        let status = self.send_command_with_data_out(0, &command, &padded)?;
-        if status != 0 {
-            bail!("printer returned non-zero status for print job: {status}");
+        // The printer's bulk endpoints use 64-byte max packet size; large
+        // writes are automatically split into multiple USB transactions by
+        // the OS/libusb, so a single write_bulk call for the whole job is
+        // fine.
+        let n = self
+            .handle
+            .write_bulk(self.endpoint_out, job, Duration::from_secs(30))
+            .context("failed to send print job")?;
+        if n != job.len() {
+            bail!("short write: sent {} of {} bytes", n, job.len());
         }
         Ok(())
     }
