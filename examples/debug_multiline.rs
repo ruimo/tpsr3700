@@ -2,7 +2,7 @@
 //! `render_text_multiline` (line count, font size, wrapped line contents)
 //! without needing the printer connected. Used to debug wrapping issues.
 
-use tpsr3700::font::{FontRenderer, TextAlign, DEFAULT_FONT_PATH, DEFAULT_FEED_MARGIN_MM};
+use tpsr3700::font::{FontRenderer, TextAlign, DEFAULT_FONT_BYTES, DEFAULT_FEED_MARGIN_MM};
 use tpsr3700::tepra::TapeWidth;
 
 fn main() -> anyhow::Result<()> {
@@ -12,7 +12,8 @@ fn main() -> anyhow::Result<()> {
         .map(|s| s.parse().unwrap())
         .unwrap_or(32.0);
 
-    let renderer = FontRenderer::load(DEFAULT_FONT_PATH)?;
+    let renderer = FontRenderer::from_bytes(DEFAULT_FONT_BYTES)
+        .map_err(|e| anyhow::anyhow!("bundled font failed to load: {e}"))?;
 
     for tape in [TapeWidth::Mm6, TapeWidth::Mm12, TapeWidth::Mm18] {
         println!("=== tape = {}mm ===", tape.width_mm());
