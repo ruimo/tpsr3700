@@ -70,8 +70,9 @@ impl TapeWidth {
     }
 
     /// Number of dots per raster row that the print head actually prints.
-    /// The top and bottom 12 bits of each bitmap row are non-printing margins
-    /// (empirically observed: printed output is centred within this range).
+    /// The top and bottom `HEAD_MARGIN_BITS` bits of each bitmap row are
+    /// non-printing margins (empirically observed: printed output is centred
+    /// within this range).
     pub fn head_bits(self) -> usize {
         self.bitmap_bits() - 2 * Self::HEAD_MARGIN_BITS
     }
@@ -82,7 +83,11 @@ impl TapeWidth {
     }
 
     /// Non-printing margin at each edge of the bitmap, in bits.
-    const HEAD_MARGIN_BITS: usize = 12;
+    /// This is the hardware default (empirically confirmed).  Pass a
+    /// different value to [`crate::font::FontRenderer::render_text`] /
+    /// [`crate::font::FontRenderer::render_text_multiline`] via the
+    /// `head_margin_bits` parameter to override it at print time.
+    pub const HEAD_MARGIN_BITS: usize = 12;
 
     /// Converts a tape width index, as returned by the printer's
     /// "detect tape width" vendor control request (byte 3 of the
