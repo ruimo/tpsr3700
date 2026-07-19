@@ -91,11 +91,6 @@ jobs:
             artifact: tpsr3700-linux-x86_64
             libusb_install: sudo apt-get update -q && sudo apt-get install -y libusb-1.0-0-dev
 
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: tpsr3700-macos-x86_64
-            libusb_install: brew install libusb
-
           - os: macos-14
             target: aarch64-apple-darwin
             artifact: tpsr3700-macos-aarch64
