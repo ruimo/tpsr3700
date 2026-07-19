@@ -131,7 +131,7 @@ struct Args {
 
     /// Blank tape feed margin (in millimeters) added before the printed
     /// content (left side when the label exits the printer).
-    #[arg(long, default_value_t = DEFAULT_FEED_MARGIN_MM)]
+    #[arg(long, default_value_t = 10.0)]
     left_margin_mm: f32,
 
     /// Blank tape feed margin (in millimeters) added after the printed
