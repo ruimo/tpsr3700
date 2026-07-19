@@ -119,11 +119,14 @@ impl Printer {
              \x20   sudo <the command you just ran>",
         )?;
 
-        // The printer's interface is normally bound to the kernel's
-        // `usblp` driver (it advertises USB Printer class 7/1/2), which
-        // would otherwise make `claim_interface` fail with "Resource
+        // On Linux the printer's interface is normally bound to the
+        // kernel's `usblp` driver (it advertises USB Printer class 7/1/2),
+        // which would otherwise make `claim_interface` fail with "Resource
         // busy". Ask libusb to detach it automatically while we hold the
         // interface, and reattach it when the handle is dropped.
+        // This API is Linux-only; macOS has no equivalent kernel driver to
+        // detach (IOKit releases the interface automatically).
+        #[cfg(target_os = "linux")]
         handle
             .set_auto_detach_kernel_driver(true)
             .context("failed to enable kernel driver auto-detach")?;
