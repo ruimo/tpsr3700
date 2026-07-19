@@ -140,7 +140,7 @@ struct Args {
     right_margin_mm: f32,
 
     /// Non-printing margin at the top edge of the tape, in dots.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 2)]
     top_margin: usize,
 
     /// Non-printing margin at the bottom edge of the tape, in dots.
@@ -259,7 +259,8 @@ fn main() -> Result<()> {
             args.bottom_margin,
         )
     } else {
-        // Single-line mode (original behaviour).
+        // Single-line mode, or implicit multi-line via '\n'.
+        let num_lines = text.lines().count().max(1);
         let size = match args.size {
             Some(size) => {
                 if renderer.would_clip(size, tape, args.top_margin, args.bottom_margin) {
@@ -274,8 +275,13 @@ fn main() -> Result<()> {
             }
             None => {
                 let max = renderer.max_size_pt_for_tape(tape, args.top_margin, args.bottom_margin);
-                eprintln!("no --size given; using {max:.1}pt (largest that fits {}mm tape)", tape.width_mm());
-                max
+                let size = max / num_lines as f32;
+                if num_lines > 1 {
+                    eprintln!("no --size given; using {size:.1}pt ({num_lines} lines on {}mm tape)", tape.width_mm());
+                } else {
+                    eprintln!("no --size given; using {size:.1}pt (largest that fits {}mm tape)", tape.width_mm());
+                }
+                size
             }
         };
         renderer.render_text(&text, size, tape, args.left_margin_mm, args.right_margin_mm, args.top_margin, args.bottom_margin)

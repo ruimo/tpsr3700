@@ -15,9 +15,9 @@ Print text labels directly from the command line — no Windows, no vendor softw
 - Print arbitrary text on 6 mm, 12 mm, and 18 mm tapes
 - Auto-detect the loaded tape width by querying the printer
 - Auto-select the largest font size that fits the tape
-- Multi-line printing: wrap text to a fixed label length, with a configurable maximum line count derived from the tape width (minimum line height: 3 mm)
-- Explicit line breaks with `\n` in the text
-- Left / center / right alignment per line
+- Multi-line printing via explicit `\n` line breaks — works with or without `--max-tape-length-mm`
+- Wrap-to-length: wrap text to a fixed label length, with a configurable maximum line count derived from the tape width (minimum line height: 3 mm)
+- Left / center / right alignment per line (with `--max-tape-length-mm`)
 - Dump the raw job bytes to a file (useful for debugging without hardware)
 
 ## Requirements
@@ -51,7 +51,7 @@ tpsr3700 [OPTIONS] <TEXT>
 | `--size <PT>` | auto | Font size in points (as shown in the TEPRA app, e.g. `36`). Omit for the largest size that fits. |
 | `--left-margin-mm <MM>` | `10.0` | Blank feed margin (mm) added before the printed content (left side as the label exits the printer). |
 | `--right-margin-mm <MM>` | `3.0` | Blank feed margin (mm) added after the printed content (right side). |
-| `--top-margin <DOTS>` | `0` | Non-printing margin at the top edge of the tape, in dots. |
+| `--top-margin <DOTS>` | `2` | Non-printing margin at the top edge of the tape, in dots. |
 | `--bottom-margin <DOTS>` | `8` | Non-printing margin at the bottom edge of the tape, in dots. |
 | `--max-tape-length-mm <MM>` | — | Total label length in mm (including margins). Enables multi-line wrapping when the text does not fit in one line. |
 | `--align <ALIGN>` | `left` | Per-line alignment: `left`, `center`, or `right`. Only meaningful with `--max-tape-length-mm`. |
@@ -68,11 +68,15 @@ tpsr3700 "Hello"
 # Print on 12 mm tape, explicit font size
 tpsr3700 --tape-mm 12 --size 24 "Hello"
 
+# Two lines with \n — no --max-tape-length-mm needed; font size is
+# automatically halved so each line fits its band
+tpsr3700 --tape-mm 18 "Line1\nLine2"
+
 # Multi-line: wrap to a 50 mm label, center-aligned
 tpsr3700 --tape-mm 18 --max-tape-length-mm 50 --align center "Hello World"
 
-# Explicit line break with \n
-tpsr3700 --tape-mm 18 --max-tape-length-mm 40 $'Line1\nLine2'
+# Explicit line break with \n inside a fixed-length label
+tpsr3700 --tape-mm 18 --max-tape-length-mm 40 "Line1\nLine2"
 
 # Dump job bytes without printing (useful for debugging)
 tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
@@ -80,11 +84,13 @@ tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
 
 ### Multi-line rules
 
-- The minimum height of one printed line is **3 mm**.  
+- The minimum height of one printed line is **3 mm**.
   A 6 mm tape fits at most **2 lines**; 12 mm fits 4; 18 mm fits 6.
+- **`\n` in the text always forces a line break**, regardless of whether `--max-tape-length-mm` is set.
+  Each line is rendered into an equal vertical band.
+- When `--size` is omitted and the text contains `\n`, the font size is automatically divided by the number of lines so each band gets the largest size that fits.
 - When `--max-tape-length-mm` is given and the text overflows one line, the tool automatically increases the line count (up to the tape's maximum) until everything fits, wrapping character by character.
-- `\n` in the text always forces a line break, regardless of width.
-- `--align` applies to each line independently.
+- `--align` applies to each line independently (only meaningful with `--max-tape-length-mm`).
 
 ## USB permissions (Linux)
 
@@ -168,9 +174,9 @@ Windows も純正ソフトも不要で、コマンドラインから直接テキ
 - 6 mm・12 mm・18 mm テープへの任意テキスト印刷
 - プリンターへの問い合わせによるテープ幅自動検出
 - テープ幅に収まる最大フォントサイズの自動選択
-- **複数行印刷**: ラベル長を指定して折り返し（テープ幅から最大行数を自動計算、最低行高さ 3 mm）
-- テキスト中の `\n` による明示的な改行
-- 行ごとの左寄せ / 中央揃え / 右寄せ
+- **複数行印刷**: テキスト中の `\n` で改行 — `--max-tape-length-mm` の有無に関わらず使用可能
+- ラベル長指定による折り返し（テープ幅から最大行数を自動計算、最低行高さ 3 mm）
+- 行ごとの左寄せ / 中央揃え / 右寄せ（`--max-tape-length-mm` 使用時）
 - 生のジョブバイト列をファイルにダンプ（ハードウェアなしでのデバッグに便利）
 
 ## 必要なもの
@@ -203,7 +209,7 @@ tpsr3700 [オプション] <テキスト>
 | `--size <PT>` | 自動 | フォントサイズ（ポイント、TEPRA アプリの表示と同じ。例: `36`）。省略時はテープに収まる最大サイズ。 |
 | `--left-margin-mm <MM>` | `10.0` | 印字内容の前（ラベルがプリンターから出る側＝左端）に追加する余白（mm）。 |
 | `--right-margin-mm <MM>` | `3.0` | 印字内容の後（右端）に追加する余白（mm）。 |
-| `--top-margin <DOTS>` | `0` | テープ上端の非印字マージン（ドット数）。 |
+| `--top-margin <DOTS>` | `2` | テープ上端の非印字マージン（ドット数）。 |
 | `--bottom-margin <DOTS>` | `8` | テープ下端の非印字マージン（ドット数）。 |
 | `--max-tape-length-mm <MM>` | — | ラベル全長（mm、マージン込み）。指定すると、1 行に収まらないテキストを複数行に折り返す。 |
 | `--align <ALIGN>` | `left` | 各行の横方向揃え: `left`（左寄せ）・`center`（中央）・`right`（右寄せ）。`--max-tape-length-mm` 指定時のみ有効。 |
@@ -220,11 +226,15 @@ tpsr3700 "Hello"
 # 12 mm テープ、フォントサイズ 24pt を指定して印刷
 tpsr3700 --tape-mm 12 --size 24 "Hello"
 
+# \n で 2 行印刷 — --max-tape-length-mm 不要
+# --size 省略時はフォントサイズを行数で自動分割
+tpsr3700 --tape-mm 18 "1行目\n2行目"
+
 # 50 mm のラベルに複数行・中央揃えで折り返し印刷
 tpsr3700 --tape-mm 18 --max-tape-length-mm 50 --align center "Hello World"
 
-# \n で明示的に改行
-tpsr3700 --tape-mm 18 --max-tape-length-mm 40 $'1行目\n2行目'
+# ラベル長を指定して \n で明示的に改行
+tpsr3700 --tape-mm 18 --max-tape-length-mm 40 "1行目\n2行目"
 
 # 印刷せずにジョブバイト列をファイルにダンプ（デバッグ用）
 tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
@@ -232,11 +242,13 @@ tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
 
 ### 複数行印刷のルール
 
-- 1 行の最低高さは **3 mm** です。  
+- 1 行の最低高さは **3 mm** です。
   6 mm テープは最大 **2 行**、12 mm は 4 行、18 mm は 6 行まで印字できます。
+- **テキスト中の `\n` は常に改行**として扱われます（`--max-tape-length-mm` の有無を問いません）。
+  各行はテープの縦方向を等分したバンドに描画されます。
+- `--size` を省略した場合、`\n` の行数に応じてフォントサイズを自動的に分割し、各バンドに収まる最大サイズを使用します。
 - `--max-tape-length-mm` を指定した場合、1 行に収まらないテキストは自動的に行数を増やして（最大行数まで）文字単位で折り返します。
-- テキスト中の `\n` は幅に関係なく常に改行として扱われます。
-- `--align` は各行に個別に適用されます。
+- `--align` は各行に個別に適用されます（`--max-tape-length-mm` 使用時のみ有効）。
 
 ## USB アクセス権の設定（Linux）
 
