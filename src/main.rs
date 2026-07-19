@@ -154,10 +154,10 @@ struct Args {
     /// is 3 mm, so a 6 mm tape allows at most 2 lines).  Omitting this
     /// option disables wrapping and prints everything on a single line.
     #[arg(long)]
-    tape_length_mm: Option<f32>,
+    max_tape_length_mm: Option<f32>,
 
     /// Horizontal alignment of each line within the label length.
-    /// Only meaningful when --tape-length-mm is set.
+    /// Only meaningful when --max-tape-length-mm is set.
     /// Allowed values: left (default), center, right.
     #[arg(long, default_value = "left")]
     align: TextAlign,
@@ -225,7 +225,7 @@ fn main() -> Result<()> {
 
     let renderer = FontRenderer::load(&args.font)?;
 
-    let (rows, margin) = if let Some(tape_length_mm) = args.tape_length_mm {
+    let (rows, margin) = if let Some(tape_length_mm) = args.max_tape_length_mm {
         // Multi-line mode: wrap text to fit the specified tape length.
         let size = match args.size {
             Some(size) => {

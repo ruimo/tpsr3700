@@ -45,8 +45,8 @@ tpsr3700 [OPTIONS] <TEXT>
 | `--tape-mm <MM>` | auto-detect | Tape width in mm. Supported: `6`, `12`, `18`. Omit to query the printer. |
 | `--size <PT>` | auto | Font size in points (as shown in the TEPRA app, e.g. `36`). Omit for the largest size that fits. |
 | `--margin-mm <MM>` | `3.0` | Blank feed margin added before and after the printed content. |
-| `--tape-length-mm <MM>` | — | Total label length in mm (including margins). Enables multi-line wrapping when the text does not fit in one line. |
-| `--align <ALIGN>` | `left` | Per-line alignment: `left`, `center`, or `right`. Only meaningful with `--tape-length-mm`. |
+| `--max-tape-length-mm <MM>` | — | Total label length in mm (including margins). Enables multi-line wrapping when the text does not fit in one line. |
+| `--align <ALIGN>` | `left` | Per-line alignment: `left`, `center`, or `right`. Only meaningful with `--max-tape-length-mm`. |
 | `--font <PATH>` | Noto Sans CJK JP | Path to a `.ttf`/`.otf`/`.ttc` font file. |
 | `--dump <PATH>` | — | Write the raw job bytes to a file (in addition to, or instead of, printing). |
 | `--no-print` | — | Skip sending the job to the printer. Useful with `--dump`. |
@@ -61,10 +61,10 @@ tpsr3700 "Hello"
 tpsr3700 --tape-mm 12 --size 24 "Hello"
 
 # Multi-line: wrap to a 50 mm label, center-aligned
-tpsr3700 --tape-mm 18 --tape-length-mm 50 --align center "Hello World"
+tpsr3700 --tape-mm 18 --max-tape-length-mm 50 --align center "Hello World"
 
 # Explicit line break with \n
-tpsr3700 --tape-mm 18 --tape-length-mm 40 $'Line1\nLine2'
+tpsr3700 --tape-mm 18 --max-tape-length-mm 40 $'Line1\nLine2'
 
 # Dump job bytes without printing (useful for debugging)
 tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
@@ -74,7 +74,7 @@ tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
 
 - The minimum height of one printed line is **3 mm**.  
   A 6 mm tape fits at most **2 lines**; 12 mm fits 4; 18 mm fits 6.
-- When `--tape-length-mm` is given and the text overflows one line, the tool automatically increases the line count (up to the tape's maximum) until everything fits, wrapping character by character.
+- When `--max-tape-length-mm` is given and the text overflows one line, the tool automatically increases the line count (up to the tape's maximum) until everything fits, wrapping character by character.
 - `\n` in the text always forces a line break, regardless of width.
 - `--align` applies to each line independently.
 
@@ -186,8 +186,8 @@ tpsr3700 [オプション] <テキスト>
 | `--tape-mm <MM>` | 自動検出 | テープ幅（mm）。`6`・`12`・`18` をサポート。省略時はプリンターに問い合わせ。 |
 | `--size <PT>` | 自動 | フォントサイズ（ポイント、TEPRA アプリの表示と同じ。例: `36`）。省略時はテープに収まる最大サイズ。 |
 | `--margin-mm <MM>` | `3.0` | 印字内容の前後に追加する余白（mm）。 |
-| `--tape-length-mm <MM>` | — | ラベル全長（mm、マージン込み）。指定すると、1 行に収まらないテキストを複数行に折り返す。 |
-| `--align <ALIGN>` | `left` | 各行の横方向揃え: `left`（左寄せ）・`center`（中央）・`right`（右寄せ）。`--tape-length-mm` 指定時のみ有効。 |
+| `--max-tape-length-mm <MM>` | — | ラベル全長（mm、マージン込み）。指定すると、1 行に収まらないテキストを複数行に折り返す。 |
+| `--align <ALIGN>` | `left` | 各行の横方向揃え: `left`（左寄せ）・`center`（中央）・`right`（右寄せ）。`--max-tape-length-mm` 指定時のみ有効。 |
 | `--font <PATH>` | Noto Sans CJK JP | フォントファイルのパス（`.ttf`/`.otf`/`.ttc`）。 |
 | `--dump <PATH>` | — | 生のジョブバイト列をファイルに書き出す（印刷と併用可）。 |
 | `--no-print` | — | プリンターへの送信をスキップ。`--dump` と組み合わせて使用。 |
@@ -202,10 +202,10 @@ tpsr3700 "Hello"
 tpsr3700 --tape-mm 12 --size 24 "Hello"
 
 # 50 mm のラベルに複数行・中央揃えで折り返し印刷
-tpsr3700 --tape-mm 18 --tape-length-mm 50 --align center "Hello World"
+tpsr3700 --tape-mm 18 --max-tape-length-mm 50 --align center "Hello World"
 
 # \n で明示的に改行
-tpsr3700 --tape-mm 18 --tape-length-mm 40 $'1行目\n2行目'
+tpsr3700 --tape-mm 18 --max-tape-length-mm 40 $'1行目\n2行目'
 
 # 印刷せずにジョブバイト列をファイルにダンプ（デバッグ用）
 tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
@@ -215,7 +215,7 @@ tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
 
 - 1 行の最低高さは **3 mm** です。  
   6 mm テープは最大 **2 行**、12 mm は 4 行、18 mm は 6 行まで印字できます。
-- `--tape-length-mm` を指定した場合、1 行に収まらないテキストは自動的に行数を増やして（最大行数まで）文字単位で折り返します。
+- `--max-tape-length-mm` を指定した場合、1 行に収まらないテキストは自動的に行数を増やして（最大行数まで）文字単位で折り返します。
 - テキスト中の `\n` は幅に関係なく常に改行として扱われます。
 - `--align` は各行に個別に適用されます。
 
