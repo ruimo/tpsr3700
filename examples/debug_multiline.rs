@@ -21,6 +21,7 @@ fn main() -> anyhow::Result<()> {
             None,
             tape,
             DEFAULT_FEED_MARGIN_MM,
+            DEFAULT_FEED_MARGIN_MM,
             tape_length_mm,
             TextAlign::Left,
             TapeWidth::HEAD_MARGIN_BITS,

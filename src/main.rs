@@ -129,10 +129,15 @@ struct Args {
     #[arg(long)]
     size: Option<f32>,
 
-    /// Blank tape feed margin (in millimeters) added before and after the
-    /// printed content.
+    /// Blank tape feed margin (in millimeters) added before the printed
+    /// content (left side when the label exits the printer).
     #[arg(long, default_value_t = DEFAULT_FEED_MARGIN_MM)]
-    margin_mm: f32,
+    left_margin_mm: f32,
+
+    /// Blank tape feed margin (in millimeters) added after the printed
+    /// content (right side).
+    #[arg(long, default_value_t = DEFAULT_FEED_MARGIN_MM)]
+    right_margin_mm: f32,
 
     /// Non-printing margin at the top edge of the tape, in dots.
     #[arg(long, default_value_t = 0)]
@@ -242,7 +247,8 @@ fn main() -> Result<()> {
             &text,
             size,
             tape,
-            args.margin_mm,
+            args.left_margin_mm,
+            args.right_margin_mm,
             tape_length_mm,
             args.align,
             args.top_margin,
@@ -268,7 +274,7 @@ fn main() -> Result<()> {
                 max
             }
         };
-        renderer.render_text(&text, size, tape, args.margin_mm, args.top_margin, args.bottom_margin)
+        renderer.render_text(&text, size, tape, args.left_margin_mm, args.right_margin_mm, args.top_margin, args.bottom_margin)
     };
 
     let char_count = text.chars().count() as u32;

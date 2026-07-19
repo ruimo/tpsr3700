@@ -284,19 +284,19 @@ impl FontRenderer {
 
     /// Render `text` at the given point size (matching the size shown in
     /// the TEPRA desktop app, e.g. 36pt) into a sequence of TEPRA raster
-    /// rows for the given tape width, with `feed_margin_mm` millimeters of
-    /// blank tape feed added before and after the printed content (see
-    /// [`DEFAULT_FEED_MARGIN_MM`]).
+    /// rows for the given tape width, with `left_margin_mm` / `right_margin_mm`
+    /// millimeters of blank tape feed added before and after the printed
+    /// content (see [`DEFAULT_FEED_MARGIN_MM`]).
     ///
     /// Returns `(rows, margin_rows)` where `margin_rows` is the number of
-    /// leading blank rows, including the feed margin (matching the `T`
-    /// command semantics).
+    /// leading (left) blank rows (matching the `T` command semantics).
     pub fn render_text(
         &self,
         text: &str,
         size_pt: f32,
         tape: TapeWidth,
-        feed_margin_mm: f32,
+        left_margin_mm: f32,
+        right_margin_mm: f32,
         top_margin_bits: usize,
         bottom_margin_bits: usize,
     ) -> (Vec<Vec<u8>>, u32) {
@@ -380,15 +380,16 @@ impl FontRenderer {
             _ => Vec::new(),
         };
 
-        let margin_rows = mm_to_rows(feed_margin_mm);
+        let left_rows = mm_to_rows(left_margin_mm);
+        let right_rows = mm_to_rows(right_margin_mm);
         let blank_row = vec![0u8; tape.bitmap_bytes()];
 
-        let mut padded = Vec::with_capacity(trimmed.len() + 2 * margin_rows as usize);
-        padded.extend(std::iter::repeat(blank_row.clone()).take(margin_rows as usize));
+        let mut padded = Vec::with_capacity(trimmed.len() + left_rows as usize + right_rows as usize);
+        padded.extend(std::iter::repeat(blank_row.clone()).take(left_rows as usize));
         padded.extend(trimmed);
-        padded.extend(std::iter::repeat(blank_row).take(margin_rows as usize));
+        padded.extend(std::iter::repeat(blank_row).take(right_rows as usize));
 
-        (padded, margin_rows)
+        (padded, left_rows)
     }
 
     /// Multi-line variant of [`render_text`].
@@ -415,7 +416,8 @@ impl FontRenderer {
         text: &str,
         size_pt: Option<f32>,
         tape: TapeWidth,
-        feed_margin_mm: f32,
+        left_margin_mm: f32,
+        right_margin_mm: f32,
         tape_length_mm: f32,
         align: TextAlign,
         top_margin_bits: usize,
@@ -427,9 +429,10 @@ impl FontRenderer {
             .saturating_sub(top_margin_bits + bottom_margin_bits)
             .max(1);
         let head_offset = bottom_margin_bits;
-        let margin_rows = mm_to_rows(feed_margin_mm);
+        let left_rows = mm_to_rows(left_margin_mm);
+        let right_rows = mm_to_rows(right_margin_mm);
         let content_length_dots =
-            (mm_to_rows(tape_length_mm) as f32 - 2.0 * margin_rows as f32).max(1.0);
+            (mm_to_rows(tape_length_mm) as f32 - left_rows as f32 - right_rows as f32).max(1.0);
         let content_dots = content_length_dots as usize;
 
         let max_lines = (tape.width_mm() as f32 / MIN_LINE_HEIGHT_MM).floor() as usize;
@@ -593,12 +596,12 @@ impl FontRenderer {
         };
 
         let blank_row = vec![0u8; tape.bitmap_bytes()];
-        let mut padded = Vec::with_capacity(trimmed.len() + 2 * margin_rows as usize);
-        padded.extend(std::iter::repeat(blank_row.clone()).take(margin_rows as usize));
+        let mut padded = Vec::with_capacity(trimmed.len() + left_rows as usize + right_rows as usize);
+        padded.extend(std::iter::repeat(blank_row.clone()).take(left_rows as usize));
         padded.extend(trimmed);
-        padded.extend(std::iter::repeat(blank_row).take(margin_rows as usize));
+        padded.extend(std::iter::repeat(blank_row).take(right_rows as usize));
 
-        (padded, margin_rows)
+        (padded, left_rows)
     }
 
     /// Split `text` at the first character that would cause the cumulative
@@ -790,6 +793,7 @@ mod tests {
             None,
             TapeWidth::Mm18,
             DEFAULT_FEED_MARGIN_MM,
+            DEFAULT_FEED_MARGIN_MM,
             50.0,
             TextAlign::Left,
             TapeWidth::HEAD_MARGIN_BITS,
@@ -836,6 +840,7 @@ mod tests {
                 None,
                 tape,
                 DEFAULT_FEED_MARGIN_MM,
+                DEFAULT_FEED_MARGIN_MM,
                 32.0,
                 TextAlign::Left,
                 TapeWidth::HEAD_MARGIN_BITS,
@@ -880,6 +885,7 @@ mod tests {
             None,
             tape,
             DEFAULT_FEED_MARGIN_MM,
+            DEFAULT_FEED_MARGIN_MM,
             tape_length_mm,
             TextAlign::Left,
             TapeWidth::HEAD_MARGIN_BITS,
@@ -913,6 +919,7 @@ mod tests {
             "D39pb",
             None,
             tape,
+            DEFAULT_FEED_MARGIN_MM,
             DEFAULT_FEED_MARGIN_MM,
             32.0,
             TextAlign::Left,
@@ -1099,6 +1106,7 @@ mod tests {
             "Dpb\nFpb",
             None,
             tape,
+            DEFAULT_FEED_MARGIN_MM,
             DEFAULT_FEED_MARGIN_MM,
             32.0,
             TextAlign::Left,
