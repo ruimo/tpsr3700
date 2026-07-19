@@ -140,8 +140,7 @@ assets/
   header_18mm_template.bin   Base template for the job header
 captures/           Raw .prn job files captured for various configurations
 docs/protocol.md    Protocol documentation
-src/font/BIZUDPGothic-Regular.ttf   BIZ UDPゴシック Regular bundled in the binary (OFL-1.1)
-testdata/fonts/     BIZ UDGothic font used in snapshot tests (OFL-1.1)
+src/font/           BIZ UDPゴシック Regular bundled in the binary (OFL-1.1)
 tests/fixtures/     Golden .prn files used in byte-exact reconstruction tests
 ```
 
@@ -298,8 +297,7 @@ assets/
   header_18mm_template.bin   ジョブヘッダーのベーステンプレート
 captures/           各種設定でキャプチャした生 .prn ファイル
 docs/protocol.md    プロトコル仕様書
-src/font/BIZUDPGothic-Regular.ttf   バイナリに埋め込まれる BIZ UDPゴシック Regular（OFL-1.1）
-testdata/fonts/     スナップショットテスト用 BIZ UDGothic（OFL-1.1）
+src/font/           バイナリに埋め込まれる BIZ UDPゴシック Regular（OFL-1.1）
 tests/fixtures/     バイト完全一致テスト用ゴールデン .prn ファイル
 ```
 
