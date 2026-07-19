@@ -24,6 +24,7 @@ fn main() -> anyhow::Result<()> {
             tape_length_mm,
             TextAlign::Left,
             TapeWidth::HEAD_MARGIN_BITS,
+            TapeWidth::HEAD_MARGIN_BITS,
         );
         println!("total rows = {}, margin = {}", rows.len(), margin);
 

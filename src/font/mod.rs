@@ -110,11 +110,20 @@ impl FontRenderer {
     /// (ascent - descent) fits within `tape`'s usable dot range.
     /// Used for the `--size` warning and single-line mode default size.
     ///
-    /// `head_margin_bits` is the number of non-printing dots at each edge
-    /// of the tape (default: [`TapeWidth::HEAD_MARGIN_BITS`]).
-    pub fn max_size_pt_for_tape(&self, tape: TapeWidth, head_margin_bits: usize) -> f32 {
+    /// `top_margin_bits` / `bottom_margin_bits` are the number of non-printing
+    /// dots at the respective tape edge (default: [`TapeWidth::HEAD_MARGIN_BITS`]
+    /// each).
+    pub fn max_size_pt_for_tape(
+        &self,
+        tape: TapeWidth,
+        top_margin_bits: usize,
+        bottom_margin_bits: usize,
+    ) -> f32 {
         let ratio_per_px = self.line_height_px(1.0);
-        let head_bits = tape.bitmap_bits().saturating_sub(2 * head_margin_bits).max(1);
+        let head_bits = tape
+            .bitmap_bits()
+            .saturating_sub(top_margin_bits + bottom_margin_bits)
+            .max(1);
         let max_px = head_bits as f32 / ratio_per_px;
         px_to_pt(max_px)
     }
@@ -123,11 +132,21 @@ impl FontRenderer {
     /// bottom of the text on `tape` (based on the font's overall vertical
     /// metrics).
     ///
-    /// `head_margin_bits` is the number of non-printing dots at each edge
-    /// of the tape (default: [`TapeWidth::HEAD_MARGIN_BITS`]).
-    pub fn would_clip(&self, size_pt: f32, tape: TapeWidth, head_margin_bits: usize) -> bool {
+    /// `top_margin_bits` / `bottom_margin_bits` are the number of non-printing
+    /// dots at the respective tape edge (default: [`TapeWidth::HEAD_MARGIN_BITS`]
+    /// each).
+    pub fn would_clip(
+        &self,
+        size_pt: f32,
+        tape: TapeWidth,
+        top_margin_bits: usize,
+        bottom_margin_bits: usize,
+    ) -> bool {
         let size_px = pt_to_px(size_pt);
-        let head_bits = tape.bitmap_bits().saturating_sub(2 * head_margin_bits).max(1);
+        let head_bits = tape
+            .bitmap_bits()
+            .saturating_sub(top_margin_bits + bottom_margin_bits)
+            .max(1);
         self.line_height_px(size_px) > head_bits as f32
     }
 
@@ -278,12 +297,16 @@ impl FontRenderer {
         size_pt: f32,
         tape: TapeWidth,
         feed_margin_mm: f32,
-        head_margin_bits: usize,
+        top_margin_bits: usize,
+        bottom_margin_bits: usize,
     ) -> (Vec<Vec<u8>>, u32) {
         let size_px = pt_to_px(size_pt);
         let bit_depth = tape.bitmap_bits();
-        let head_bits = tape.bitmap_bits().saturating_sub(2 * head_margin_bits).max(1);
-        let head_offset = head_margin_bits;
+        let head_bits = tape
+            .bitmap_bits()
+            .saturating_sub(top_margin_bits + bottom_margin_bits)
+            .max(1);
+        let head_offset = top_margin_bits;
 
         // Render each character to a coverage bitmap and place it into a
         // column buffer: outer index = column (x), inner = row (y, i.e.
@@ -395,11 +418,15 @@ impl FontRenderer {
         feed_margin_mm: f32,
         tape_length_mm: f32,
         align: TextAlign,
-        head_margin_bits: usize,
+        top_margin_bits: usize,
+        bottom_margin_bits: usize,
     ) -> (Vec<Vec<u8>>, u32) {
         let total_bits = tape.bitmap_bits();
-        let head_bits = tape.bitmap_bits().saturating_sub(2 * head_margin_bits).max(1);
-        let head_offset = head_margin_bits;
+        let head_bits = tape
+            .bitmap_bits()
+            .saturating_sub(top_margin_bits + bottom_margin_bits)
+            .max(1);
+        let head_offset = top_margin_bits;
         let margin_rows = mm_to_rows(feed_margin_mm);
         let content_length_dots =
             (mm_to_rows(tape_length_mm) as f32 - 2.0 * margin_rows as f32).max(1.0);
@@ -662,9 +689,9 @@ mod tests {
         let Some(renderer) = default_renderer() else {
             return;
         };
-        let max_6mm = renderer.max_size_pt_for_tape(TapeWidth::Mm6, TapeWidth::HEAD_MARGIN_BITS);
-        let max_12mm = renderer.max_size_pt_for_tape(TapeWidth::Mm12, TapeWidth::HEAD_MARGIN_BITS);
-        let max_18mm = renderer.max_size_pt_for_tape(TapeWidth::Mm18, TapeWidth::HEAD_MARGIN_BITS);
+        let max_6mm = renderer.max_size_pt_for_tape(TapeWidth::Mm6, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
+        let max_12mm = renderer.max_size_pt_for_tape(TapeWidth::Mm12, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
+        let max_18mm = renderer.max_size_pt_for_tape(TapeWidth::Mm18, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
         assert!(max_6mm < max_12mm);
         assert!(max_12mm < max_18mm);
     }
@@ -675,10 +702,10 @@ mod tests {
             return;
         };
         for tape in [TapeWidth::Mm6, TapeWidth::Mm12, TapeWidth::Mm18] {
-            let max = renderer.max_size_pt_for_tape(tape, TapeWidth::HEAD_MARGIN_BITS);
-            assert!(!renderer.would_clip(max, tape, TapeWidth::HEAD_MARGIN_BITS));
+            let max = renderer.max_size_pt_for_tape(tape, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
+            assert!(!renderer.would_clip(max, tape, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS));
             // A couple of points larger should clip.
-            assert!(renderer.would_clip(max + 2.0, tape, TapeWidth::HEAD_MARGIN_BITS));
+            assert!(renderer.would_clip(max + 2.0, tape, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS));
         }
     }
 
@@ -689,7 +716,7 @@ mod tests {
         };
         // 36pt was captured to clip visibly on 12mm tape in real hardware
         // testing; the much narrower 6mm tape should clip it too.
-        assert!(renderer.would_clip(36.0, TapeWidth::Mm6, TapeWidth::HEAD_MARGIN_BITS));
+        assert!(renderer.would_clip(36.0, TapeWidth::Mm6, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS));
     }
 
     #[test]
@@ -766,6 +793,7 @@ mod tests {
             50.0,
             TextAlign::Left,
             TapeWidth::HEAD_MARGIN_BITS,
+            TapeWidth::HEAD_MARGIN_BITS,
         );
         assert!(!rows.is_empty());
         assert!(margin > 0);
@@ -811,6 +839,7 @@ mod tests {
                 32.0,
                 TextAlign::Left,
                 TapeWidth::HEAD_MARGIN_BITS,
+                TapeWidth::HEAD_MARGIN_BITS,
             );
             let ho = tape.head_offset();
             let hb = tape.head_bits();
@@ -854,6 +883,7 @@ mod tests {
             tape_length_mm,
             TextAlign::Left,
             TapeWidth::HEAD_MARGIN_BITS,
+            TapeWidth::HEAD_MARGIN_BITS,
         );
 
         // Output must be non-empty and contain ink somewhere.
@@ -886,6 +916,7 @@ mod tests {
             DEFAULT_FEED_MARGIN_MM,
             32.0,
             TextAlign::Left,
+            TapeWidth::HEAD_MARGIN_BITS,
             TapeWidth::HEAD_MARGIN_BITS,
         );
 
@@ -1071,6 +1102,7 @@ mod tests {
             DEFAULT_FEED_MARGIN_MM,
             32.0,
             TextAlign::Left,
+            TapeWidth::HEAD_MARGIN_BITS,
             TapeWidth::HEAD_MARGIN_BITS,
         );
 

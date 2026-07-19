@@ -7,11 +7,11 @@ use tpsr3700::tepra::TapeWidth;
 
 /// Parse `job` and print a human-readable summary plus an ASCII-art
 /// rendering of the raster rows to stdout.
-fn dump_explain(job: &[u8], tape: TapeWidth, vertical_margin: usize) {
+fn dump_explain(job: &[u8], tape: TapeWidth, top_margin: usize, bottom_margin: usize) {
     let bitmap_bytes = tape.bitmap_bytes();
     let bitmap_bits = tape.bitmap_bits();
-    let head_offset = vertical_margin;
-    let head_bits = tape.bitmap_bits().saturating_sub(2 * vertical_margin).max(1);
+    let head_offset = top_margin;
+    let head_bits = tape.bitmap_bits().saturating_sub(top_margin + bottom_margin).max(1);
 
     // ---- Header block (fixed 2179 bytes) ----
     let tape_mm_byte = job[8];
@@ -134,12 +134,18 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_FEED_MARGIN_MM)]
     margin_mm: f32,
 
-    /// Non-printing margin at the top and bottom edge of the tape, in dots.
+    /// Non-printing margin at the top edge of the tape, in dots.
     /// The hardware default is 12 dots (empirically confirmed); reduce this
     /// to maximise the printable area, or increase it to keep ink away from
     /// the tape edge.
     #[arg(long, default_value_t = TapeWidth::HEAD_MARGIN_BITS)]
-    vertical_margin: usize,
+    top_margin: usize,
+
+    /// Non-printing margin at the bottom edge of the tape, in dots.
+    /// Defaults to the same value as --top-margin (12 dots).
+    /// Independently adjustable to shift the ink position on the tape.
+    #[arg(long, default_value_t = TapeWidth::HEAD_MARGIN_BITS)]
+    bottom_margin: usize,
 
     /// Total label length in millimeters, including left and right feed
     /// margins.  When the text does not fit on one line at the chosen font
@@ -225,8 +231,8 @@ fn main() -> Result<()> {
             Some(size) => {
                 // Validate manually since would_clip is tape-width-based,
                 // but the per-band check happens inside render_text_multiline.
-                if renderer.would_clip(size, tape, args.vertical_margin) {
-                    let max = renderer.max_size_pt_for_tape(tape, args.vertical_margin);
+                if renderer.would_clip(size, tape, args.top_margin, args.bottom_margin) {
+                    let max = renderer.max_size_pt_for_tape(tape, args.top_margin, args.bottom_margin);
                     eprintln!(
                         "warning: {size}pt may be too large for {}mm tape and could be \
                          clipped at the top/bottom; try --size {max:.1} or smaller",
@@ -244,14 +250,15 @@ fn main() -> Result<()> {
             args.margin_mm,
             tape_length_mm,
             args.align,
-            args.vertical_margin,
+            args.top_margin,
+            args.bottom_margin,
         )
     } else {
         // Single-line mode (original behaviour).
         let size = match args.size {
             Some(size) => {
-                if renderer.would_clip(size, tape, args.vertical_margin) {
-                    let max = renderer.max_size_pt_for_tape(tape, args.vertical_margin);
+                if renderer.would_clip(size, tape, args.top_margin, args.bottom_margin) {
+                    let max = renderer.max_size_pt_for_tape(tape, args.top_margin, args.bottom_margin);
                     eprintln!(
                         "warning: {size}pt may be too large for {}mm tape and could be \
                          clipped at the top/bottom; try --size {max:.1} or smaller",
@@ -261,12 +268,12 @@ fn main() -> Result<()> {
                 size
             }
             None => {
-                let max = renderer.max_size_pt_for_tape(tape, args.vertical_margin);
+                let max = renderer.max_size_pt_for_tape(tape, args.top_margin, args.bottom_margin);
                 eprintln!("no --size given; using {max:.1}pt (largest that fits {}mm tape)", tape.width_mm());
                 max
             }
         };
-        renderer.render_text(&text, size, tape, args.margin_mm, args.vertical_margin)
+        renderer.render_text(&text, size, tape, args.margin_mm, args.top_margin, args.bottom_margin)
     };
 
     let char_count = text.chars().count() as u32;
@@ -275,7 +282,7 @@ fn main() -> Result<()> {
     if let Some(path) = &args.dump {
         std::fs::write(path, &job)?;
         eprintln!("wrote {} bytes to {}", job.len(), path.display());
-        dump_explain(&job, tape, args.vertical_margin);
+        dump_explain(&job, tape, args.top_margin, args.bottom_margin);
     }
 
     if !args.no_print {
