@@ -306,7 +306,7 @@ impl FontRenderer {
             .bitmap_bits()
             .saturating_sub(top_margin_bits + bottom_margin_bits)
             .max(1);
-        let head_offset = top_margin_bits;
+        let head_offset = bottom_margin_bits;
 
         // Render each character to a coverage bitmap and place it into a
         // column buffer: outer index = column (x), inner = row (y, i.e.
@@ -426,7 +426,7 @@ impl FontRenderer {
             .bitmap_bits()
             .saturating_sub(top_margin_bits + bottom_margin_bits)
             .max(1);
-        let head_offset = top_margin_bits;
+        let head_offset = bottom_margin_bits;
         let margin_rows = mm_to_rows(feed_margin_mm);
         let content_length_dots =
             (mm_to_rows(tape_length_mm) as f32 - 2.0 * margin_rows as f32).max(1.0);

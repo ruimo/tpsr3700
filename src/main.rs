@@ -10,7 +10,7 @@ use tpsr3700::tepra::TapeWidth;
 fn dump_explain(job: &[u8], tape: TapeWidth, top_margin: usize, bottom_margin: usize) {
     let bitmap_bytes = tape.bitmap_bytes();
     let bitmap_bits = tape.bitmap_bits();
-    let head_offset = top_margin;
+    let head_offset = bottom_margin;
     let head_bits = tape.bitmap_bits().saturating_sub(top_margin + bottom_margin).max(1);
 
     // ---- Header block (fixed 2179 bytes) ----
