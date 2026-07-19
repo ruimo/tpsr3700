@@ -1,6 +1,6 @@
 # tpsr3700
 
-Linux driver for the **KING JIM TEPRA PRO SR3700P** label printer.
+Linux and macOS driver for the **KING JIM TEPRA PRO SR3700P** label printer.
 
 Print text labels directly from the command line — no Windows, no vendor software required.
 
@@ -23,7 +23,9 @@ Print text labels directly from the command line — no Windows, no vendor softw
 ## Requirements
 
 - Rust toolchain (edition 2024)
-- `libusb` development headers (`libusb-1.0-dev` on Debian/Ubuntu)
+- `libusb`:
+  - Debian/Ubuntu: `sudo apt-get install libusb-1.0-0-dev`
+  - macOS: `brew install libusb`
 - A TrueType/OpenType font file. The default is
   `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` (present on
   most Debian/Ubuntu systems via the `fonts-noto-cjk` package). Any
@@ -82,11 +84,13 @@ tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
 - `\n` in the text always forces a line break, regardless of width.
 - `--align` applies to each line independently.
 
-## USB permissions
+## USB permissions (Linux)
 
 The tool communicates with the printer via libusb. On most Linux systems, regular users do not have **read/write** access to USB device nodes by default. Without it you will get a "permission denied" error when running the tool.
 
-The recommended fix is a persistent udev rule that grants read/write access to members of the `lp` group. Create the file:
+> **macOS:** IOKit grants userspace access to USB devices automatically — no extra configuration is needed.
+
+The recommended fix on Linux is a persistent udev rule that grants read/write access to members of the `lp` group. Create the file:
 
 ```
 # /etc/udev/rules.d/99-tepra.rules
@@ -128,6 +132,7 @@ assets/
   header_18mm_template.bin   Base template for the job header
 captures/           Raw .prn job files captured for various configurations
 docs/protocol.md    Protocol documentation
+testdata/fonts/     BIZ UDGothic font bundled for tests (OFL-1.1)
 tests/fixtures/     Golden .prn files used in byte-exact reconstruction tests
 ```
 
@@ -147,9 +152,9 @@ Licensed under the [Apache License, Version 2.0](LICENSE).
 
 # tpsr3700（日本語）
 
-Linux 用 **KING JIM TEPRA PRO SR3700P** ラベルプリンタードライバーです。
+Linux・macOS 用 **KING JIM TEPRA PRO SR3700P** ラベルプリンタードライバーです。
 
-Windows も純正ソフトも不要で、Linux のコマンドラインから直接テキストラベルを印刷できます。
+Windows も純正ソフトも不要で、コマンドラインから直接テキストラベルを印刷できます。
 
 > **免責事項:** 本プログラムは KING JIM 株式会社とは無関係です。本ソフトウェアについて KING JIM 社へお問い合わせをしないでください。
 
@@ -168,7 +173,9 @@ Windows も純正ソフトも不要で、Linux のコマンドラインから直
 ## 必要なもの
 
 - Rust ツールチェーン（edition 2024）
-- `libusb` 開発ヘッダー（Debian/Ubuntu では `libusb-1.0-dev`）
+- `libusb`:
+  - Debian/Ubuntu: `sudo apt-get install libusb-1.0-0-dev`
+  - macOS: `brew install libusb`
 - TrueType/OpenType フォントファイル。デフォルトは
   `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`（Debian/Ubuntu では
   `fonts-noto-cjk` パッケージで入る）。`--font <PATH>` で任意のフォントを指定可能。
@@ -226,11 +233,13 @@ tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
 - テキスト中の `\n` は幅に関係なく常に改行として扱われます。
 - `--align` は各行に個別に適用されます。
 
-## USB アクセス権の設定
+## USB アクセス権の設定（Linux）
 
 このツールは libusb 経由でプリンターと通信します。多くの Linux 環境では、一般ユーザーはデフォルトで USB デバイスノードへの**読み書きアクセス権**を持っていません。権限がない場合、ツール実行時に "permission denied" エラーが発生します。
 
-推奨される対処法は、`lp` グループのメンバーに読み書きアクセスを付与する永続的な udev ルールの作成です。以下のファイルを作成してください：
+> **macOS:** IOKit がユーザー空間への USB アクセスを自動で許可するため、追加設定は不要です。
+
+推奨される対処法は Linux での udev ルール設定です。`lp` グループのメンバーに読み書きアクセスを付与する永続的なルールを作成してください：
 
 ```
 # /etc/udev/rules.d/99-tepra.rules
@@ -272,6 +281,7 @@ assets/
   header_18mm_template.bin   ジョブヘッダーのベーステンプレート
 captures/           各種設定でキャプチャした生 .prn ファイル
 docs/protocol.md    プロトコル仕様書
+testdata/fonts/     テスト用バンドルフォント BIZ UDGothic（OFL-1.1）
 tests/fixtures/     バイト完全一致テスト用ゴールデン .prn ファイル
 ```
 
