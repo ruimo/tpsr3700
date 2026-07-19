@@ -125,13 +125,15 @@ jobs:
 
       - name: Prepare artifact
         shell: bash
-        run: cp target/${{ matrix.target }}/release/tpsr3700 ${{ matrix.artifact }}
+        run: |
+          cp target/${{ matrix.target }}/release/tpsr3700 tpsr3700
+          zip ${{ matrix.artifact }}.zip tpsr3700
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
           if-no-files-found: error
 
   # ── Step 3: create GitHub Release and attach binaries ───────────────────────
