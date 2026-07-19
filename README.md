@@ -24,7 +24,10 @@ Print text labels directly from the command line — no Windows, no vendor softw
 
 - Rust toolchain (edition 2024)
 - `libusb` development headers (`libusb-1.0-dev` on Debian/Ubuntu)
-- A TrueType/OpenType font — defaults to `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`
+- A TrueType/OpenType font file. The default is
+  `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` (present on
+  most Debian/Ubuntu systems via the `fonts-noto-cjk` package). Any
+  other `.ttf`/`.otf`/`.ttc` file works via `--font <PATH>`.
 
 ## Build
 
@@ -48,7 +51,7 @@ tpsr3700 [OPTIONS] <TEXT>
 | `--right-margin-mm <MM>` | `3.0` | Blank feed margin (mm) added after the printed content (right side). |
 | `--max-tape-length-mm <MM>` | — | Total label length in mm (including margins). Enables multi-line wrapping when the text does not fit in one line. |
 | `--align <ALIGN>` | `left` | Per-line alignment: `left`, `center`, or `right`. Only meaningful with `--max-tape-length-mm`. |
-| `--font <PATH>` | Noto Sans CJK JP | Path to a `.ttf`/`.otf`/`.ttc` font file. |
+| `--font <PATH>` | `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` | Path to a `.ttf`/`.otf`/`.ttc` font file. |
 | `--dump <PATH>` | — | Write the raw job bytes to a file (in addition to, or instead of, printing). |
 | `--no-print` | — | Skip sending the job to the printer. Useful with `--dump`. |
 
@@ -166,7 +169,9 @@ Windows も純正ソフトも不要で、Linux のコマンドラインから直
 
 - Rust ツールチェーン（edition 2024）
 - `libusb` 開発ヘッダー（Debian/Ubuntu では `libusb-1.0-dev`）
-- TrueType/OpenType フォント（デフォルト: `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`）
+- TrueType/OpenType フォントファイル。デフォルトは
+  `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`（Debian/Ubuntu では
+  `fonts-noto-cjk` パッケージで入る）。`--font <PATH>` で任意のフォントを指定可能。
 
 ## ビルド
 
@@ -190,7 +195,7 @@ tpsr3700 [オプション] <テキスト>
 | `--right-margin-mm <MM>` | `3.0` | 印字内容の後（右端）に追加する余白（mm）。 |
 | `--max-tape-length-mm <MM>` | — | ラベル全長（mm、マージン込み）。指定すると、1 行に収まらないテキストを複数行に折り返す。 |
 | `--align <ALIGN>` | `left` | 各行の横方向揃え: `left`（左寄せ）・`center`（中央）・`right`（右寄せ）。`--max-tape-length-mm` 指定時のみ有効。 |
-| `--font <PATH>` | Noto Sans CJK JP | フォントファイルのパス（`.ttf`/`.otf`/`.ttc`）。 |
+| `--font <PATH>` | `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` | フォントファイルのパス（`.ttf`/`.otf`/`.ttc`）。 |
 | `--dump <PATH>` | — | 生のジョブバイト列をファイルに書き出す（印刷と併用可）。 |
 | `--no-print` | — | プリンターへの送信をスキップ。`--dump` と組み合わせて使用。 |
 
