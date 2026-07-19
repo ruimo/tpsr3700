@@ -109,7 +109,7 @@ fn dump_explain(job: &[u8], tape: TapeWidth, top_margin: usize, bottom_margin: u
     println!("[Footer]  0x0C + ESC{{'{{'@'}}");
 }
 
-/// Print text on a KING JIM TEPRA PRO SR3700P label printer from Linux.
+/// Print text on a KING JIM TEPRA PRO SR3700P label printer from Linux or macOS.
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
