@@ -397,8 +397,10 @@ need further captures or hardware experimentation to pin down:
 
 ## 6. References / raw data
 
-- `captures/*.prn` — raw job byte streams captured by redirecting the
-  Windows driver's output to a `FILE:` port, for various text/tape
-  width/font size combinations. Same files are duplicated under
-  `tests/fixtures/` for use in golden byte-exact reconstruction tests.
+- `tests/fixtures/*.prn` — raw job byte streams captured by redirecting
+  the Windows driver's output to a `FILE:` port, for various text/tape
+  width/font size combinations. Used as golden files in byte-exact
+  reconstruction tests.
+- `captures/obtain-tape-width.pcap` — USBPcap capture of the driver
+  probing the tape width.
 - `src/tepra/` — the Rust implementation described above.

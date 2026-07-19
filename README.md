@@ -138,7 +138,7 @@ src/
   usb/              libusb/rusb transport (bulk write + tape detection)
 assets/
   header_18mm_template.bin   Base template for the job header
-captures/           Raw .prn job files captured for various configurations
+captures/           Raw USB capture of the tape-width probe (.pcap)
 docs/protocol.md    Protocol documentation
 src/font/           BIZ UDPゴシック Regular bundled in the binary (OFL-1.1)
 tests/fixtures/     Golden .prn files used in byte-exact reconstruction tests
@@ -295,7 +295,7 @@ src/
   usb/              libusb/rusb トランスポート（バルク書き込みとテープ幅検出）
 assets/
   header_18mm_template.bin   ジョブヘッダーのベーステンプレート
-captures/           各種設定でキャプチャした生 .prn ファイル
+captures/           テープ幅検出時の USB キャプチャ（.pcap）
 docs/protocol.md    プロトコル仕様書
 src/font/           バイナリに埋め込まれる BIZ UDPゴシック Regular（OFL-1.1）
 tests/fixtures/     バイト完全一致テスト用ゴールデン .prn ファイル
