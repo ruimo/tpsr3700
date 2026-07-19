@@ -107,151 +107,38 @@ impl FontRenderer {
     }
 
     /// Returns the largest point size at which this font's line height
-    /// (ascent - descent) fits within `tape`'s usable dot range, i.e. the
-    /// largest size that won't have its top or bottom clipped.
-    ///
-    /// Note this is a conservative, content-independent estimate based on
-    /// the font's overall vertical metrics, not the actual ink extents of
-    /// the text being printed (which are usually smaller, e.g. text
-    /// without descenders like "A" or all-uppercase strings).
+    /// (ascent - descent) fits within `tape`'s usable dot range.
+    /// Used for the `--size` warning and single-line mode default size.
     pub fn max_size_pt_for_tape(&self, tape: TapeWidth) -> f32 {
         let ratio_per_px = self.line_height_px(1.0);
         let max_px = tape.head_bits() as f32 / ratio_per_px;
         px_to_pt(max_px)
     }
 
-    /// Returns the largest point size at which this font's line height fits
-    /// within `bit_height` bits (used for multi-line rendering where each
-    /// line occupies only a fraction of the tape height).
-    fn max_size_pt_for_bits(&self, bit_height: usize) -> f32 {
-        let ratio_per_px = self.line_height_px(1.0);
-        let max_px = bit_height as f32 / ratio_per_px;
-        px_to_pt(max_px)
-    }
-
     /// Returns `true` if rendering at `size_pt` would clip the top or
     /// bottom of the text on `tape` (based on the font's overall vertical
-    /// metrics, same caveat as [`FontRenderer::max_size_pt_for_tape`]).
+    /// metrics).
     pub fn would_clip(&self, size_pt: f32, tape: TapeWidth) -> bool {
         let size_px = pt_to_px(size_pt);
         self.line_height_px(size_px) > tape.head_bits() as f32
     }
 
-    /// Wraps `text` into lines such that each line's advance width in dots
-    /// does not exceed `max_width_dots`.  Wrapping is character-granular
-    /// (suitable for label printing, where word-wrap is rarely meaningful).
-    /// Explicit `\n` characters always force a line break.
-    /// Returns the list of `&str` slices that constitute the wrapped lines.
-    fn wrap_chars<'a>(&self, text: &'a str, size_px: f32, max_width_dots: f32) -> Vec<&'a str> {
-        let chars: Vec<(usize, char)> = text.char_indices().collect();
-        if chars.is_empty() {
-            return vec![""];
-        }
-
-        let mut lines: Vec<&'a str> = Vec::new();
-        let mut line_start_idx = 0; // byte offset in `text`
-        let mut line_start_char = 0; // char index
-        let mut current_width = 0.0f32;
-
-        for (ci, (byte_idx, ch)) in chars.iter().enumerate() {
-            // Explicit newline: flush current line and start a new one.
-            if *ch == '\n' {
-                lines.push(&text[line_start_idx..*byte_idx]);
-                line_start_idx = byte_idx + '\n'.len_utf8();
-                line_start_char = ci + 1;
-                current_width = 0.0;
-                continue;
-            }
-
-            let (metrics, _) = self.font.rasterize(*ch, size_px);
-            let advance = metrics.advance_width;
-
-            if current_width + advance > max_width_dots && ci > line_start_char {
-                // Flush the current line (up to but not including this char).
-                let end_byte = *byte_idx;
-                lines.push(&text[line_start_idx..end_byte]);
-                line_start_idx = *byte_idx;
-                line_start_char = ci;
-                current_width = 0.0;
-            }
-            current_width += advance;
-        }
-
-        // Push the remaining text as the last line.
-        lines.push(&text[line_start_idx..]);
-        lines
-    }
-
-    /// Finds the largest point size in `(0, upper_pt]` at which `text`
-    /// wraps (via [`FontRenderer::wrap_chars`]) into at most `max_lines`
-    /// lines within `max_width_dots`, using binary search.
+    /// Render one line of text into a framebuffer using font metrics.
     ///
-    /// Returns `None` if even a very small, minimal point size still
-    /// doesn't fit within `max_lines` lines (should only happen for
-    /// pathological inputs, e.g. an effectively zero-width label).
-    fn largest_fitting_size(
-        &self,
-        text: &str,
-        upper_pt: f32,
-        max_width_dots: f32,
-        max_lines: usize,
-    ) -> Option<f32> {
-        let fits = |pt: f32| -> bool {
-            let px = pt_to_px(pt);
-            self.wrap_chars(text, px, max_width_dots).len() <= max_lines
-        };
-
-        if upper_pt <= 0.0 {
-            return None;
-        }
-        if fits(upper_pt) {
-            // The height-based upper bound already satisfies the width
-            // constraint too; no need to shrink further.
-            return Some(upper_pt);
-        }
-
-        const MIN_PT: f32 = 0.5;
-        if !fits(MIN_PT) {
-            // Doesn't fit even at a minimal, near-illegible size.
-            return None;
-        }
-
-        // Binary search for the largest pt in [MIN_PT, upper_pt] that fits.
-        let mut lo = MIN_PT;
-        let mut hi = upper_pt;
-        for _ in 0..24 {
-            let mid = (lo + hi) / 2.0;
-            if fits(mid) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        Some(lo)
-    }
-
-    /// Render one line of text into a column buffer (outer = feed col,
-    /// inner = bit position across tape width), placed within a vertical
-    /// band of `[bit_start, bit_start + band_bits)` within the full tape
-    /// height (`total_bits`).
+    /// The framebuffer uses a logical coordinate system where row 0 is the
+    /// top of the line.  Glyph placement follows the font's `ascent` so all
+    /// characters share a common baseline.  The framebuffer height is
+    /// `ascent - descent` (i.e. `line_height_px`); glyphs are not clipped.
     ///
-    /// Returns `(columns, total_advance_dots)`.
-    fn render_line_columns(
-        &self,
-        text: &str,
-        size_px: f32,
-        total_bits: usize,
-        head_offset: usize,
-        head_bits: usize,
-        bit_start: usize,
-    ) -> (Vec<Vec<bool>>, f32) {
+    /// Returns `(columns, advance_width)` where `columns[x][y]` is true if
+    /// dot (x, y) is inked.  `y=0` is the topmost row.
+    fn rasterize_line(&self, text: &str, size_px: f32) -> (Vec<Vec<bool>>, f32) {
         let line_metrics = self.font.horizontal_line_metrics(size_px);
         let ascent = match line_metrics {
             Some(m) => m.ascent,
             None => size_px,
         };
-        // Align to the top of the printable band.
-        let band_top_margin = 0.0f32;
+        let line_height = self.line_height_px(size_px).ceil() as usize;
 
         let mut columns: Vec<Vec<bool>> = Vec::new();
         let mut cursor_x = 0.0f32;
@@ -263,7 +150,7 @@ impl FontRenderer {
 
             let start_col = cursor_x.round() as usize;
             while columns.len() < start_col + glyph_width.max(1) {
-                columns.push(vec![false; total_bits]);
+                columns.push(vec![false; line_height]);
             }
 
             for gy in 0..glyph_height {
@@ -272,31 +159,98 @@ impl FontRenderer {
                     if coverage > 127 {
                         let glyph_top =
                             ascent - (metrics.ymin as f32 + glyph_height as f32);
-                        // Row within the band (0-based, top of band = 0).
-                        let band_row =
-                            (band_top_margin + glyph_top + gy as f32).round() as isize;
-                        // Clip to printable band.
-                        if band_row < 0 || band_row as usize >= head_bits {
-                            continue;
-                        }
-                        // Absolute row within the printable area of this band.
-                        let abs_head_row = bit_start + band_row as usize;
-                        // Mirror: within the printable area (head_bits rows),
-                        // row 0 maps to the last bit of the printable area.
-                        // Then shift by head_offset to place inside the bitmap.
-                        let bit_pos = head_offset + (head_bits - 1 - abs_head_row);
-                        if bit_pos < total_bits {
+                        let row = (glyph_top + gy as f32).round() as isize;
+                        if row >= 0 && (row as usize) < line_height {
                             let col = start_col + gx;
-                            columns[col][bit_pos] = true;
+                            columns[col][row as usize] = true;
                         }
                     }
                 }
             }
-
             cursor_x += metrics.advance_width;
         }
 
         (columns, cursor_x)
+    }
+
+    /// Returns the topmost inked row index in the framebuffer, or 0 if no ink.
+    fn ink_top(columns: &[Vec<bool>]) -> usize {
+        for col in columns {
+            for (y, &ink) in col.iter().enumerate() {
+                if ink {
+                    return y;
+                }
+            }
+        }
+        0
+    }
+
+    /// Returns the span from the topmost to bottommost inked row (inclusive).
+    /// Returns 0 if there is no ink.
+    fn ink_height(columns: &[Vec<bool>]) -> usize {
+        let mut top: Option<usize> = None;
+        let mut bot: Option<usize> = None;
+        for col in columns {
+            for (y, &ink) in col.iter().enumerate() {
+                if ink {
+                    top = Some(top.map_or(y, |v| v.min(y)));
+                    bot = Some(bot.map_or(y, |v| v.max(y)));
+                }
+            }
+        }
+        match (top, bot) {
+            (Some(t), Some(b)) => b - t + 1,
+            _ => 0,
+        }
+    }
+
+    /// Place a pre-rasterized framebuffer into the tape bitmap.
+    ///
+    /// `bit_start_signed` is the framebuffer row-0 position within the
+    /// printable area (may be negative when centering pushes the top up).
+    /// Only rows that fall within `[band_start, band_start + band_head_bits)`
+    /// are written, so ink never bleeds into adjacent bands.
+    fn place_framebuf_at(
+        framebuf: &[Vec<bool>],
+        merged: &mut Vec<Vec<bool>>,
+        total_bits: usize,
+        head_offset: usize,
+        head_bits: usize,
+        bit_start_signed: isize,
+        band_start: usize,
+        band_head_bits: usize,
+        h_offset: usize,
+        content_dots: usize,
+    ) {
+        let band_end = band_start + band_head_bits;
+        for (ci, col_bits) in framebuf.iter().enumerate() {
+            let dest_col = h_offset + ci;
+            if dest_col >= content_dots {
+                break;
+            }
+            for (row, &ink) in col_bits.iter().enumerate() {
+                if !ink {
+                    continue;
+                }
+                let abs_head_row = bit_start_signed + row as isize;
+                if abs_head_row < 0 {
+                    continue;
+                }
+                let abs_head_row = abs_head_row as usize;
+                // Clamp to this line's band.
+                if abs_head_row < band_start || abs_head_row >= band_end {
+                    continue;
+                }
+                if abs_head_row >= head_bits {
+                    continue;
+                }
+                // Mirror within printable area, then offset into bitmap.
+                let bit_pos = head_offset + (head_bits - 1 - abs_head_row);
+                if bit_pos < total_bits {
+                    merged[dest_col][bit_pos] = true;
+                }
+            }
+        }
     }
 
     /// Render `text` at the given point size (matching the size shown in
@@ -405,27 +359,23 @@ impl FontRenderer {
 
     /// Multi-line variant of [`render_text`].
     ///
-    /// `tape_length_mm` is the total label length including left and right
-    /// feed margins.  If the text does not fit in one line within that
-    /// length, it is wrapped character-by-character onto additional lines.
-    /// The maximum number of lines is determined by `tape.width_mm()` and
-    /// [`MIN_LINE_HEIGHT_MM`] (e.g. 6mm tape → 2 lines max).
-    ///
-    /// `size_pt` controls the font size. If `None`, the size is chosen
-    /// automatically: for every candidate line count from 1 up to the
-    /// maximum, the largest font size that fits both that line count's
-    /// height budget *and* the label length (width) is computed, and the
-    /// candidate with the overall largest resulting font size wins. This
-    /// avoids a pitfall where a *smaller* font (sized for more, thinner
-    /// lines) happens to need fewer lines width-wise than a larger font
-    /// (sized for fewer, taller lines) — naively preferring "fewer lines"
-    /// in that case would lock in the smaller font even though the
-    /// larger font could still fit using its own line count.
-    ///
-    /// `align` controls horizontal alignment of each line within the label
-    /// length (left/center/right).
-    ///
-    /// Returns `(rows, margin_rows)` in the same format as [`render_text`].
+    /// Algorithm:
+    /// 1. Count `num_lines` from explicit `\n` separators (≥ 1).
+    ///    If `num_lines > max_lines`, clamp to `max_lines`.
+    /// 2. `band_head_bits = head_bits / num_lines` — fixed for the whole job.
+    /// 3. For each segment (in order):
+    ///    a. Rasterize at a provisional size and split at `content_length_dots`.
+    ///       Overflow is prepended back to the pending queue (same band).
+    ///    b. Rasterize the fitting text at the provisional size, measure the
+    ///       actual ink height (`ink_h`) from the bitmap.
+    ///    c. Scale: `final_px = provisional_px * band_head_bits / ink_h`.
+    ///    d. Re-check width at `final_px`.  If overflow, prepend to pending
+    ///       and repeat (b–d) until stable.
+    ///    e. If pending now has more segments than remaining bands, and
+    ///       `num_lines < max_lines`, restart with `num_lines + 1`.
+    ///       Otherwise discard excess segments.
+    /// 4. Render each confirmed line into the tape bitmap, centering the ink
+    ///    vertically within its band.
     pub fn render_text_multiline(
         &self,
         text: &str,
@@ -437,92 +387,128 @@ impl FontRenderer {
     ) -> (Vec<Vec<u8>>, u32) {
         let total_bits = tape.bitmap_bits();
         let head_bits = tape.head_bits();
+        let head_offset = tape.head_offset();
         let margin_rows = mm_to_rows(feed_margin_mm);
-        // Content length (dots) = total tape length minus both feed margins.
         let content_length_dots =
-            mm_to_rows(tape_length_mm) as f32 - 2.0 * margin_rows as f32;
-        let content_length_dots = content_length_dots.max(1.0);
+            (mm_to_rows(tape_length_mm) as f32 - 2.0 * margin_rows as f32).max(1.0);
+        let content_dots = content_length_dots as usize;
 
-        // Maximum number of lines that fit on this tape.
         let max_lines = (tape.width_mm() as f32 / MIN_LINE_HEIGHT_MM).floor() as usize;
         let max_lines = max_lines.max(1);
 
-        let (size_px, wrapped_lines): (f32, Vec<&str>) = match size_pt {
-            Some(pt) => {
-                // Fixed size: wrapping doesn't depend on line count at all
-                // (same text, same size, same width budget), so just wrap
-                // once and use however many lines that produces.
-                let px = pt_to_px(pt);
-                let lines = self.wrap_chars(text, px, content_length_dots);
-                (px, lines)
-            }
-            None => {
-                // Try every candidate line count and keep the one that
-                // yields the largest usable font size overall.
-                let mut best: Option<(f32, f32, Vec<&str>)> = None; // (pt, px, lines)
-                for nl in 1..=max_lines {
-                    // Font size upper bound is based on head_bits (printable
-                    // area) divided evenly among lines.
-                    let band_bits = head_bits / nl;
-                    let upper_pt = self.max_size_pt_for_bits(band_bits);
-                    if let Some(pt) =
-                        self.largest_fitting_size(text, upper_pt, content_length_dots, nl)
-                    {
-                        let is_better = match &best {
-                            Some((best_pt, _, _)) => pt > *best_pt,
-                            None => true,
-                        };
-                        if is_better {
-                            let px = pt_to_px(pt);
-                            let lines = self.wrap_chars(text, px, content_length_dots);
-                            best = Some((pt, px, lines));
-                        }
+        // Step 1: split on explicit \n.  num_lines is fixed by the \n count,
+        // but may grow (up to max_lines) if wrap overflow exceeds remaining bands.
+        let initial_segments: Vec<String> = text
+            .split('\n')
+            .map(|s| s.to_string())
+            .collect();
+
+        let mut num_lines = initial_segments.len().min(max_lines).max(1);
+
+        // Outer retry loop: re-run with num_lines+1 when overflow can't be absorbed.
+        let confirmed: Vec<(String, f32)> = 'retry: loop {
+            let band_head_bits = head_bits / num_lines;
+
+            // provisional_px: size such that font's ascent–descent fills one band.
+            let provisional_px = match size_pt {
+                Some(pt) => pt_to_px(pt),
+                None => {
+                    let ratio = self.line_height_px(1.0);
+                    band_head_bits as f32 / ratio
+                }
+            };
+
+            let mut pending: std::collections::VecDeque<String> =
+                initial_segments.iter().cloned().collect();
+            let mut confirmed: Vec<(String, f32)> = Vec::new();
+
+            'band: loop {
+                let Some(segment) = pending.pop_front() else { break 'band };
+                let bands_left = num_lines - confirmed.len();
+
+                // Step 3a: split at content width using provisional size.
+                let (mut fit_text, mut overflow) =
+                    self.split_at_width(&segment, provisional_px, content_length_dots);
+
+                // Step 3b–d: measure actual ink height, scale, re-check width.
+                let final_px = loop {
+                    let (fb, _) = self.rasterize_line(&fit_text, provisional_px);
+                    let ink_h = Self::ink_height(&fb);
+                    let scaled_px = if ink_h > 0 {
+                        provisional_px * band_head_bits as f32 / ink_h as f32
+                    } else {
+                        provisional_px
+                    };
+
+                    let (refit, new_ov) =
+                        self.split_at_width(&fit_text, scaled_px, content_length_dots);
+                    if refit == fit_text {
+                        break scaled_px;
+                    }
+                    // scaled_px caused new overflow — merge and retry with shorter text.
+                    overflow = if overflow.is_empty() {
+                        new_ov
+                    } else {
+                        format!("{}{}", new_ov, overflow)
+                    };
+                    fit_text = refit;
+                };
+
+                // Prepend leftover back to pending.
+                if !overflow.is_empty() {
+                    pending.push_front(overflow);
+                }
+
+                confirmed.push((fit_text, final_px));
+
+                // Step 3e: check if pending overflows remaining bands.
+                let remaining_bands = bands_left - 1; // we just used one
+                if pending.len() > remaining_bands {
+                    if num_lines < max_lines {
+                        // Restart with one more line.
+                        num_lines += 1;
+                        continue 'retry;
+                    } else {
+                        // Can't grow further — discard overflow.
+                        break 'band;
                     }
                 }
-                match best {
-                    Some((_, px, lines)) => (px, lines),
-                    None => {
-                        // Degenerate case (e.g. zero-width label): fall back
-                        // to the smallest band's max size and let it
-                        // overflow rather than panic.
-                        let band_bits = head_bits / max_lines;
-                        let pt = self.max_size_pt_for_bits(band_bits);
-                        let px = pt_to_px(pt);
-                        let lines = self.wrap_chars(text, px, content_length_dots);
-                        (px, lines)
-                    }
+
+                if confirmed.len() >= num_lines {
+                    break 'band;
                 }
             }
+
+            break 'retry confirmed;
         };
 
-        // Clamp to the tape's maximum line count; any lines beyond that are
-        // dropped (the label simply can't fit them).
-        let num_lines = wrapped_lines.len().max(1).min(max_lines);
+        // Step 4: render confirmed lines into tape bitmap.
+        let num_confirmed = confirmed.len().max(1);
+        let band_head_bits = head_bits / num_confirmed;
 
-        // Render each wrapped line into the appropriate vertical band.
-        // band_bits for bit_start calculation uses head_bits so each line's
-        // printable area is evenly divided within the printable region.
-        let head_offset = tape.head_offset();
-        let band_head_bits = head_bits / num_lines;
-        let content_dots = content_length_dots as usize;
-
-        // Build a merged column buffer (outer = feed col 0..content_dots,
-        // inner = bit position across tape width 0..total_bits).
         let mut merged: Vec<Vec<bool>> = vec![vec![false; total_bits]; content_dots];
 
-        for (line_idx, &line_text) in wrapped_lines.iter().enumerate() {
-            if line_idx >= num_lines {
-                break;
-            }
-            let bit_start = line_idx * band_head_bits;
+        for (line_idx, (line_text, final_px)) in confirmed.iter().enumerate() {
+            let band_start = line_idx * band_head_bits;
 
-            let (line_columns, line_width) =
-                self.render_line_columns(line_text, size_px, total_bits, head_offset, head_bits, bit_start);
+            let (fb, advance) = self.rasterize_line(line_text, *final_px);
 
-            // Compute horizontal offset based on alignment.
-            let col_count = line_columns.len();
-            let line_width_dots = line_width.round() as usize;
-            let offset = match align {
+            // Center ink vertically within the band.
+            let ink_h = Self::ink_height(&fb);
+            let ink_top = Self::ink_top(&fb);
+            let v_offset = if ink_h < band_head_bits {
+                (band_head_bits - ink_h) / 2
+            } else {
+                0
+            };
+            // bit_start: where row 0 of this band lands, adjusted so that
+            // the ink block is centred.  We subtract ink_top so the
+            // framebuffer's logical row 0 maps to (band_start + v_offset - ink_top).
+            let bit_start_signed =
+                band_start as isize + v_offset as isize - ink_top as isize;
+
+            let line_width_dots = advance.round() as usize;
+            let h_offset = match align {
                 TextAlign::Left => 0,
                 TextAlign::Center => {
                     if content_dots > line_width_dots {
@@ -540,31 +526,30 @@ impl FontRenderer {
                 }
             };
 
-            for (ci, col_bits) in line_columns.iter().enumerate() {
-                let dest_col = offset + ci;
-                if dest_col < content_dots {
-                    for (bi, &bit) in col_bits.iter().enumerate() {
-                        if bit {
-                            merged[dest_col][bi] = true;
-                        }
-                    }
-                }
-            }
-            let _ = col_count; // suppress unused warning
+            Self::place_framebuf_at(
+                &fb,
+                &mut merged,
+                total_bits,
+                head_offset,
+                head_bits,
+                bit_start_signed,
+                band_start,
+                band_head_bits,
+                h_offset,
+                content_dots,
+            );
         }
 
-        // Pack merged columns into raster rows.
+        // Pack, trim, add margins.
         let content_rows: Vec<Vec<u8>> = merged
             .iter()
             .map(|col| pack_bits(col, tape.bitmap_bytes()))
             .collect();
 
-        // Trim leading/trailing blank columns.
         let first_nonblank = content_rows.iter().position(|r| r.iter().any(|&b| b != 0));
         let last_nonblank = content_rows.iter().rposition(|r| r.iter().any(|&b| b != 0));
-
         let trimmed = match (first_nonblank, last_nonblank) {
-            (Some(first), Some(last)) => content_rows[first..=last].to_vec(),
+            (Some(f), Some(l)) => content_rows[f..=l].to_vec(),
             _ => Vec::new(),
         };
 
@@ -575,6 +560,24 @@ impl FontRenderer {
         padded.extend(std::iter::repeat(blank_row).take(margin_rows as usize));
 
         (padded, margin_rows)
+    }
+
+    /// Split `text` at the first character that would cause the cumulative
+    /// advance width to exceed `max_width` when rasterized at `size_px`.
+    /// Returns `(fit, overflow)` where `fit` is the prefix that fits and
+    /// `overflow` is the remainder (may be empty).
+    fn split_at_width(&self, text: &str, size_px: f32, max_width: f32) -> (String, String) {
+        let mut width = 0.0f32;
+        let mut split_byte = text.len(); // default: everything fits
+        for (byte_idx, ch) in text.char_indices() {
+            let (metrics, _) = self.font.rasterize(ch, size_px);
+            if width + metrics.advance_width > max_width && byte_idx > 0 {
+                split_byte = byte_idx;
+                break;
+            }
+            width += metrics.advance_width;
+        }
+        (text[..split_byte].to_string(), text[split_byte..].to_string())
     }
 }
 
@@ -591,6 +594,43 @@ fn pack_bits(bits: &[bool], out_len: usize) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Converts raster rows into an ASCII-art string for snapshot testing.
+/// `#`=ink  `.`=blank  `|`=non-printing margin boundary at `head_offset`
+/// and `head_offset + head_bits`.
+/// Feed direction is downsampled to at most `max_rows` lines.
+#[cfg(test)]
+fn rows_to_ascii(
+    rows: &[Vec<u8>],
+    total_bits: usize,
+    head_offset: usize,
+    head_bits: usize,
+    max_rows: usize,
+) -> String {
+    let step = (rows.len() / max_rows).max(1);
+    rows.iter()
+        .enumerate()
+        .filter(|(i, _)| i % step == 0)
+        .map(|(_, row)| {
+            (0..total_bits)
+                .map(|bit| {
+                    if bit == head_offset || bit == head_offset + head_bits {
+                        '|'
+                    } else {
+                        let byte_idx = bit / 8;
+                        let bit_idx = 7 - (bit % 8);
+                        if byte_idx < row.len() && (row[byte_idx] >> bit_idx) & 1 == 1 {
+                            '#'
+                        } else {
+                            '.'
+                        }
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -649,53 +689,56 @@ mod tests {
     }
 
     #[test]
-    fn wrap_chars_fits_single_line() {
+    fn split_at_width_fits_single_line() {
         let Some(renderer) = default_renderer() else {
             return;
         };
         let size_px = pt_to_px(12.0);
-        // A very wide max width should give a single line.
-        let lines = renderer.wrap_chars("ABC", size_px, 10000.0);
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0], "ABC");
+        // A very wide max width: everything fits, overflow is empty.
+        let (fit, overflow) = renderer.split_at_width("ABC", size_px, 10000.0);
+        assert_eq!(fit, "ABC");
+        assert_eq!(overflow, "");
     }
 
     #[test]
-    fn wrap_chars_wraps_when_narrow() {
+    fn split_at_width_wraps_when_narrow() {
         let Some(renderer) = default_renderer() else {
             return;
         };
         let size_px = pt_to_px(12.0);
-        // Force each character onto its own line by using width = 1.
-        let lines = renderer.wrap_chars("ABC", size_px, 1.0);
-        // Should produce at least 2 lines for "ABC".
-        assert!(lines.len() >= 2);
+        // Width=1: only the first char (or nothing extra) fits.
+        let (fit, overflow) = renderer.split_at_width("ABC", size_px, 1.0);
+        assert!(!overflow.is_empty(), "expected overflow for narrow width");
+        assert!(fit.len() < "ABC".len());
     }
 
     #[test]
-    fn wrap_chars_respects_explicit_newline() {
+    fn split_at_width_explicit_newline_handled_by_caller() {
         let Some(renderer) = default_renderer() else {
             return;
         };
         let size_px = pt_to_px(12.0);
-        // Even with a very wide max width, \n must split the string.
-        let lines = renderer.wrap_chars("AB\nCD", size_px, 10000.0);
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], "AB");
-        assert_eq!(lines[1], "CD");
+        // \n splitting is done before split_at_width (by render_text_multiline).
+        // split_at_width sees each segment without \n.
+        let segments: Vec<&str> = "AB\nCD".split('\n').collect();
+        assert_eq!(segments.len(), 2);
+        let (fit0, ov0) = renderer.split_at_width(segments[0], size_px, 10000.0);
+        let (fit1, ov1) = renderer.split_at_width(segments[1], size_px, 10000.0);
+        assert_eq!(fit0, "AB");
+        assert_eq!(ov0, "");
+        assert_eq!(fit1, "CD");
+        assert_eq!(ov1, "");
     }
 
     #[test]
-    fn wrap_chars_newline_at_start_and_end() {
+    fn split_at_width_empty_segment() {
         let Some(renderer) = default_renderer() else {
             return;
         };
         let size_px = pt_to_px(12.0);
-        let lines = renderer.wrap_chars("\nAB\n", size_px, 10000.0);
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], "");
-        assert_eq!(lines[1], "AB");
-        assert_eq!(lines[2], "");
+        let (fit, overflow) = renderer.split_at_width("", size_px, 10000.0);
+        assert_eq!(fit, "");
+        assert_eq!(overflow, "");
     }
 
     #[test]
@@ -715,6 +758,17 @@ mod tests {
         assert!(margin > 0);
     }
 
+    /// Asserts that the ASCII-art rendering of `rows` matches `expected`.
+    /// On failure prints both expected and actual art.
+    #[track_caller]
+    fn assert_ascii_art(rows: &[Vec<u8>], tape: TapeWidth, max_cols: usize, expected: &str) {
+        let actual = rows_to_ascii(rows, tape.bitmap_bits(), tape.head_offset(), tape.head_bits(), max_cols);
+        assert_eq!(
+            actual, expected,
+            "\nASCII art mismatch.\nExpected:\n{expected}\nActual:\n{actual}"
+        );
+    }
+
     /// Returns true if any bit in `[bit_start, bit_end)` is set in any row.
     fn any_ink_in_bit_range(rows: &[Vec<u8>], bit_start: usize, bit_end: usize) -> bool {
         rows.iter().any(|row| {
@@ -727,44 +781,36 @@ mod tests {
     }
 
     #[test]
-    fn multiline_uses_both_bands_when_two_lines_beat_one() {
-        // Regression test for a bug where an internal pt/px unit mismatch
-        // caused the line-count search to always keep the *first*
-        // successful candidate (effectively always nl=1), even when a
-        // larger overall font size was achievable with more lines. For
-        // this text/length/tape combination, 2 lines with a larger font
-        // is strictly better than 1 line with a smaller font.
-        //
-        // With the bug, only 1 (undersized) line is used, centered in the
-        // middle of the tape; ink stays confined near the vertical center
-        // and never reaches close to the very top/bottom edges. With 2
-        // full-height-per-band lines, ink must reach near *both* edges
-        // (each line's font is sized to nearly fill its own half-band).
-        // Checking near the extreme edges (rather than just "each half")
-        // avoids a false pass from a single centered line that happens to
-        // straddle the halfway point.
+    fn multiline_uses_both_bands_when_explicit_newline() {
+        // With an explicit \n the text is split into two lines.
+        // Line 0 occupies the first half of the printable area (bit_start=0),
+        // line 1 occupies the second half (bit_start=head_bits/2).
+        // Both halves should contain ink.
         let Some(renderer) = default_renderer() else {
             return;
         };
         for tape in [TapeWidth::Mm12, TapeWidth::Mm18] {
             let (rows, _margin) = renderer.render_text_multiline(
-                "D39M-06N420V20A",
+                "D39M-06N\n420V20A",
                 None,
                 tape,
                 DEFAULT_FEED_MARGIN_MM,
                 32.0,
                 TextAlign::Left,
             );
-            let total_bits = tape.bitmap_bits();
-            let edge = total_bits / 4;
+            let ho = tape.head_offset();
+            let hb = tape.head_bits();
+            let half = hb / 2;
+            // Line 0: bit_start=0, mirrored into [ho + half .. ho + hb)
             assert!(
-                any_ink_in_bit_range(&rows, 0, edge),
-                "expected ink near the top edge of {}mm tape (single centered line bug?)",
+                any_ink_in_bit_range(&rows, ho + half, ho + hb),
+                "expected ink in first-line band on {}mm tape",
                 tape.width_mm()
             );
+            // Line 1: bit_start=half, mirrored into [ho .. ho + half)
             assert!(
-                any_ink_in_bit_range(&rows, total_bits - edge, total_bits),
-                "expected ink near the bottom edge of {}mm tape (single centered line bug?)",
+                any_ink_in_bit_range(&rows, ho, ho + half),
+                "expected ink in second-line band on {}mm tape",
                 tape.width_mm()
             );
         }
@@ -801,4 +847,303 @@ mod tests {
         assert!(any_ink_in_bit_range(&rows, 0, total_bits));
     }
 
+    /// Regression test: `"D39pb"` on 6mm tape.
+    ///
+    /// `p` and `b` have descenders that extend below the baseline.
+    /// Verifies that:
+    /// 1. Output is non-empty and contains ink.
+    /// 2. Ink is present in both the upper half (ascenders: D, 3, 9) and
+    ///    the lower half (descenders: p, b) of the printable area.
+    ///    The printable area spans [head_offset .. head_offset + head_bits).
+    ///    With top-aligned rendering and the font's ascent placing the
+    ///    baseline roughly 70% down, ascenders land in the upper portion
+    ///    and descenders extend into the lower portion.
+    #[test]
+    fn render_6mm_descender_text_not_clipped() {
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        let tape = TapeWidth::Mm6;
+        let (rows, _margin) = renderer.render_text_multiline(
+            "D39pb",
+            None,
+            tape,
+            DEFAULT_FEED_MARGIN_MM,
+            32.0,
+            TextAlign::Left,
+        );
+
+        assert!(!rows.is_empty(), "expected non-empty output");
+
+        assert_ascii_art(&rows, tape, 120, "\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|..........#############################|...........\n\
+............|..........#############################|...........\n\
+............|..........#############################|...........\n\
+............|..........#############################|...........\n\
+............|..........###.......................###|...........\n\
+............|..........###.......................###|...........\n\
+............|..........###.......................###|...........\n\
+............|..........###.......................###|...........\n\
+............|..........###.......................###|...........\n\
+............|..........###.......................###|...........\n\
+............|..........####.....................####|...........\n\
+............|...........###.....................###.|...........\n\
+............|...........###.....................###.|...........\n\
+............|...........####...................####.|...........\n\
+............|............####.................####..|...........\n\
+............|............#####...............#####..|...........\n\
+............|.............#######.........#######...|...........\n\
+............|..............#####################....|...........\n\
+............|...............###################.....|...........\n\
+............|.................###############.......|...........\n\
+............|.....................#######...........|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.............#.........................|...........\n\
+............|............###........................|...........\n\
+............|............###...................###..|...........\n\
+............|...........###....................####.|...........\n\
+............|..........####.....................###.|...........\n\
+............|..........###......................####|...........\n\
+............|..........###...........##..........###|...........\n\
+............|..........###...........##..........###|...........\n\
+............|..........###...........###.........###|...........\n\
+............|..........###..........####.........###|...........\n\
+............|..........###..........####.........###|...........\n\
+............|..........###..........#####........###|...........\n\
+............|..........###.........######.......####|...........\n\
+............|..........####........###.####....#####|...........\n\
+............|...........####.....####..############.|...........\n\
+............|...........#############...##########..|...........\n\
+............|............###########.....########...|...........\n\
+............|.............#########........####.....|...........\n\
+............|................###....................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|..........................########.....|...........\n\
+............|...........###..........############...|...........\n\
+............|...........###.........##############..|...........\n\
+............|..........####........#####......#####.|...........\n\
+............|..........###.........###..........####|...........\n\
+............|..........###........###............###|...........\n\
+............|..........###........###............###|...........\n\
+............|..........###........###.............##|...........\n\
+............|..........###........###.............##|...........\n\
+............|..........###........###............###|...........\n\
+............|..........####........##............###|...........\n\
+............|...........###........###..........####|...........\n\
+............|...........#####.......##.........####.|...........\n\
+............|............######......###.....######.|...........\n\
+............|.............########################..|...........\n\
+............|...............####################....|...........\n\
+............|.................################......|...........\n\
+............|.....................########..........|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.##############################........|...........\n\
+............|.##############################........|...........\n\
+............|.##############################........|...........\n\
+............|............###...........###..........|...........\n\
+............|...........###.............###.........|...........\n\
+............|..........###...............###........|...........\n\
+............|..........###...............###........|...........\n\
+............|..........###................###.......|...........\n\
+............|..........###................###.......|...........\n\
+............|..........###................###.......|...........\n\
+............|..........###................###.......|...........\n\
+............|..........###...............####.......|...........\n\
+............|..........####..............####.......|...........\n\
+............|...........#####..........#####........|...........\n\
+............|............#######....########........|...........\n\
+............|.............#################.........|...........\n\
+............|..............##############...........|...........\n\
+............|................##########.............|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|..........#############################|...........\n\
+............|..........#############################|...........\n\
+............|..........#############################|...........\n\
+............|............###...........###..........|...........\n\
+............|...........###.............###.........|...........\n\
+............|..........###...............###........|...........\n\
+............|..........###...............###........|...........\n\
+............|..........###................###.......|...........\n\
+............|..........###................###.......|...........\n\
+............|..........###................###.......|...........\n\
+............|..........###................###.......|...........\n\
+............|..........###...............####.......|...........\n\
+............|..........####..............####.......|...........\n\
+............|...........#####..........#####........|...........\n\
+............|............#######....########........|...........\n\
+............|.............#################.........|...........\n\
+............|..............##############...........|...........\n\
+............|................##########.............|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........");
+    }
+
+    /// Snapshot test: `"Dpb\nFpb"` on 6mm tape (2 lines, all with descenders).
+    #[test]
+    fn render_6mm_two_line_descenders() {
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        let tape = TapeWidth::Mm6;
+        let (rows, _margin) = renderer.render_text_multiline(
+            "Dpb\nFpb",
+            None,
+            tape,
+            DEFAULT_FEED_MARGIN_MM,
+            32.0,
+            TextAlign::Left,
+        );
+
+        assert!(!rows.is_empty(), "expected non-empty output");
+
+        assert_ascii_art(&rows, tape, 120, "\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.....##############......##############|...........\n\
+............|.....##############......##############|...........\n\
+............|...........##.....#......#............#|...........\n\
+............|...........##.....#......##...........#|...........\n\
+............|...........##.....#......##...........#|...........\n\
+............|...........##.....#......##...........#|...........\n\
+............|...........##.....#......##..........##|...........\n\
+............|..................#.......##........##.|...........\n\
+............|...........................#####.#####.|...........\n\
+............|............................########...|...........\n\
+............|.......................................|...........\n\
+............|################.......................|...........\n\
+............|.##############........................|...........\n\
+............|.....##.......#........................|...........\n\
+............|.....#........##....################...|...........\n\
+............|.....#........##.....##############....|...........\n\
+............|.....##.......##.........##.......#....|...........\n\
+............|.....###......##.........#........##...|...........\n\
+............|......#########..........#........##...|...........\n\
+............|.......#######...........##.......##...|...........\n\
+............|.........................###......##...|...........\n\
+............|..........................#########....|...........\n\
+............|...........................#######.....|...........\n\
+............|.....##############....................|...........\n\
+............|......#############....................|...........\n\
+............|.....##.......#........................|...........\n\
+............|.....#........##.........##############|...........\n\
+............|.....#........##..........#############|...........\n\
+............|.....##.......##.........##.......#....|...........\n\
+............|.....###......##.........#........##...|...........\n\
+............|......#########..........#........##...|...........\n\
+............|.......#######...........##.......##...|...........\n\
+............|.........................###......##...|...........\n\
+............|..........................#########....|...........\n\
+............|...........................#######.....|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........\n\
+............|.......................................|...........");
+    }
 }

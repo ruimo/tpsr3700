@@ -6,7 +6,7 @@ use tpsr3700::font::{FontRenderer, TextAlign, DEFAULT_FONT_PATH, DEFAULT_FEED_MA
 use tpsr3700::tepra::TapeWidth;
 
 fn main() -> anyhow::Result<()> {
-    let text = std::env::args().nth(1).unwrap_or_else(|| "D39pb\n6800bp".to_string());
+    let text = std::env::args().nth(1).unwrap_or_else(|| "D39pb".to_string());
     let tape_length_mm: f32 = std::env::args()
         .nth(2)
         .map(|s| s.parse().unwrap())
