@@ -5,6 +5,110 @@ use tpsr3700::font::{FontRenderer, TextAlign, DEFAULT_FONT_PATH, DEFAULT_FEED_MA
 use tpsr3700::tepra::builder::build_print_job;
 use tpsr3700::tepra::TapeWidth;
 
+/// Parse `job` and print a human-readable summary plus an ASCII-art
+/// rendering of the raster rows to stdout.
+fn dump_explain(job: &[u8], tape: TapeWidth) {
+    let bitmap_bytes = tape.bitmap_bytes();
+    let bitmap_bits = tape.bitmap_bits();
+    let head_offset = tape.head_offset();
+    let head_bits = tape.head_bits();
+
+    // ---- Header block (fixed 2179 bytes) ----
+    let tape_mm_byte = job[8];
+    println!("=== TEPRA job dump ({} bytes) ===", job.len());
+    println!();
+    println!("[Header block]  bytes 0-2178 (2179 bytes, fixed)");
+    println!("  tape width byte (offset 8) : 0x{:02X} = {}mm", tape_mm_byte, tape_mm_byte);
+
+    // ---- Config commands ----
+    // Frame layout: ESC { <len> <cmd> <params…> <checksum> }
+    // Lengths: C=10, D=7, G=6, L=10, T=9  (ESC+{+len+cmd+params+cs+})
+    const HEADER_LEN: usize = 2179;
+    const CMD_FRAME_OVERHEAD: usize = 4; // ESC { len cmd ... cs }  (excl params)
+    let cmd_c_len = CMD_FRAME_OVERHEAD + 4 + 2; // 4 params + cs + }
+    let cmd_d_len = CMD_FRAME_OVERHEAD + 1 + 2;
+    let cmd_g_len = CMD_FRAME_OVERHEAD + 0 + 2;
+    let cmd_l_len = CMD_FRAME_OVERHEAD + 4 + 2;
+    let cmd_t_len = CMD_FRAME_OVERHEAD + 2 + 2;
+
+    let l_params = HEADER_LEN + cmd_c_len + cmd_d_len + cmd_g_len + 4; // skip ESC { len 'L'
+    let row_count = u32::from_le_bytes(job[l_params..l_params + 4].try_into().unwrap());
+
+    let t_params = HEADER_LEN + cmd_c_len + cmd_d_len + cmd_g_len + cmd_l_len + 4;
+    let margin_rows = u16::from_le_bytes(job[t_params..t_params + 2].try_into().unwrap());
+
+    println!();
+    println!("[Config commands]");
+    println!("  L (row count)  : {}", row_count);
+    println!("  T (margin rows): {}", margin_rows);
+
+    // ---- Raster rows ----
+    let row_len = 7 + bitmap_bytes; // ESC . 00 0D 0D 01 <width_byte> <bitmap>
+    let raster_start = HEADER_LEN + cmd_c_len + cmd_d_len + cmd_g_len + cmd_l_len + cmd_t_len;
+
+    println!();
+    println!(
+        "[Raster rows]  {} rows × {} bitmap bytes ({} bits, printable: bits {}..{})",
+        row_count,
+        bitmap_bytes,
+        bitmap_bits,
+        head_offset,
+        head_offset + head_bits - 1,
+    );
+
+    // Collect bitmaps.
+    let mut bitmaps: Vec<&[u8]> = Vec::new();
+    for i in 0..row_count as usize {
+        let start = raster_start + i * row_len;
+        bitmaps.push(&job[start + 7..start + 7 + bitmap_bytes]);
+    }
+
+    // Per-bit ink counts (for summary).
+    let mut bit_ink = vec![0u32; bitmap_bits];
+    for bm in &bitmaps {
+        for (byte_i, &byte) in bm.iter().enumerate() {
+            for bit_j in 0..8 {
+                let bit_pos = byte_i * 8 + bit_j;
+                if bit_pos >= bitmap_bits { break; }
+                if (byte >> (7 - bit_j)) & 1 == 1 {
+                    bit_ink[bit_pos] += 1;
+                }
+            }
+        }
+    }
+    let first_ink = bit_ink.iter().position(|&v| v > 0);
+    let last_ink  = bit_ink.iter().rposition(|&v| v > 0);
+    match (first_ink, last_ink) {
+        (Some(f), Some(l)) => println!("  ink bit range  : {}..{} (span {})", f, l, l - f + 1),
+        _ => println!("  ink bit range  : (none)"),
+    }
+
+    // ASCII art — downsample feed direction to ≤120 columns for readability.
+    println!();
+    println!("[ASCII art]  '#'=ink  '.'=blank  '|'=non-printing margin boundary");
+    let step = (row_count as usize / 120).max(1);
+    for (i, bm) in bitmaps.iter().enumerate() {
+        if i % step != 0 { continue; }
+        let line: String = (0..bitmap_bits).map(|bit| {
+            let byte_i = bit / 8;
+            let bit_j  = bit % 8;
+            let inked  = (bm[byte_i] >> (7 - bit_j)) & 1 == 1;
+            if bit == head_offset || bit == head_offset + head_bits {
+                '|'
+            } else if inked {
+                '#'
+            } else {
+                '.'
+            }
+        }).collect();
+        println!("{}", line);
+    }
+
+    // ---- Footer ----
+    println!();
+    println!("[Footer]  0x0C + ESC{{'{{'@'}}");
+}
+
 /// Print text on a KING JIM TEPRA PRO SR3700P label printer from Linux.
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -65,6 +169,11 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Replace literal "\n" (two characters: backslash + n) with a real
+    // newline, so the user can write --  "line1\nline2" on the command line
+    // without needing shell $'...' quoting.
+    let text = args.text.replace("\\n", "\n");
+
     // Open the printer early if we might need it, either for tape width
     // auto-detection or for actually sending the job, so both can share
     // the same connection.
@@ -122,7 +231,7 @@ fn main() -> Result<()> {
             None => None,
         };
         renderer.render_text_multiline(
-            &args.text,
+            &text,
             size,
             tape,
             args.margin_mm,
@@ -149,15 +258,16 @@ fn main() -> Result<()> {
                 max
             }
         };
-        renderer.render_text(&args.text, size, tape, args.margin_mm)
+        renderer.render_text(&text, size, tape, args.margin_mm)
     };
 
-    let char_count = args.text.chars().count() as u32;
+    let char_count = text.chars().count() as u32;
     let job = build_print_job(tape, char_count, &rows, margin);
 
     if let Some(path) = &args.dump {
         std::fs::write(path, &job)?;
         eprintln!("wrote {} bytes to {}", job.len(), path.display());
+        dump_explain(&job, tape);
     }
 
     if !args.no_print {

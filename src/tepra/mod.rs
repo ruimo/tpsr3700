@@ -69,6 +69,21 @@ impl TapeWidth {
         self.width_byte() as usize + 8
     }
 
+    /// Number of dots per raster row that the print head actually prints.
+    /// The top and bottom 12 bits of each bitmap row are non-printing margins
+    /// (empirically observed: printed output is centred within this range).
+    pub fn head_bits(self) -> usize {
+        self.bitmap_bits() - 2 * Self::HEAD_MARGIN_BITS
+    }
+
+    /// Bit offset within the bitmap row at which the printable area starts.
+    pub fn head_offset(self) -> usize {
+        Self::HEAD_MARGIN_BITS
+    }
+
+    /// Non-printing margin at each edge of the bitmap, in bits.
+    const HEAD_MARGIN_BITS: usize = 12;
+
     /// Converts a tape width index, as returned by the printer's
     /// "detect tape width" vendor control request (byte 3 of the
     /// response; see [`crate::usb::Printer::get_tape_info_raw`] and

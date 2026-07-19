@@ -91,20 +91,30 @@ impl Printer {
 
         let handle = device.open().context(
             "failed to open the printer's USB device (permission denied?)\n\n\
-             This usually means your user doesn't have permission to access the\n\
-             printer's USB device node. Try one of:\n\
+             This usually means your user doesn't have read/write permission to\n\
+             access the printer's USB device node. Try one of:\n\
              \n\
-             1. Add your user to the `lp` group and start a new login session\n\
+             1. Create a udev rule (recommended — survives reboots):\n\
+             \n\
+             \x20   echo 'SUBSYSTEM==\"usb\", ATTRS{idVendor}==\"0d8a\", ATTRS{idProduct}==\"0103\", GROUP=\"lp\", MODE=\"0660\"' \\\n\
+             \x20       | sudo tee /etc/udev/rules.d/99-tepra.rules\n\
+             \x20   sudo usermod -aG lp $USER\n\
+             \x20   sudo udevadm control --reload && sudo udevadm trigger\n\
+             \n\
+             \x20   Then unplug/re-plug the printer and start a new login session\n\
+             \x20   (or run `newgrp lp` in the current shell).\n\
+             \n\
+             2. Add your user to the `lp` group and start a new login session\n\
              (log out/in, or run `newgrp lp` in a new shell):\n\
              \n\
              \x20   sudo usermod -aG lp $USER\n\
              \n\
-             2. Or, run this command with a group override for the current\n\
+             3. Or, run this command with a group override for the current\n\
              shell only (no logout required):\n\
              \n\
              \x20   sg lp -c '<the command you just ran>'\n\
              \n\
-             3. Or, run as root (not recommended for routine use):\n\
+             4. Or, run as root (not recommended for routine use):\n\
              \n\
              \x20   sudo <the command you just ran>",
         )?;

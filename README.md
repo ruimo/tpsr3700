@@ -80,18 +80,32 @@ tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
 
 ## USB permissions
 
-The tool communicates with the printer via libusb. On most Linux systems you need either root, or a udev rule granting your user access:
+The tool communicates with the printer via libusb. On most Linux systems, regular users do not have **read/write** access to USB device nodes by default. Without it you will get a "permission denied" error when running the tool.
+
+The recommended fix is a persistent udev rule that grants read/write access to members of the `lp` group. Create the file:
 
 ```
 # /etc/udev/rules.d/99-tepra.rules
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0d8a", ATTRS{idProduct}=="0103", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0d8a", ATTRS{idProduct}=="0103", GROUP="lp", MODE="0660"
 ```
 
-Then reload rules:
+`GROUP="lp"` restricts access to the `lp` group and `MODE="0660"` grants read/write to that group only (safer than opening it to all users).
+
+Or create it in one command:
 
 ```sh
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="0d8a", ATTRS{idProduct}=="0103", GROUP="lp", MODE="0660"' \
+    | sudo tee /etc/udev/rules.d/99-tepra.rules
+```
+
+Then add your user to the `lp` group, reload the rules, and re-trigger the device:
+
+```sh
+sudo usermod -aG lp $USER
 sudo udevadm control --reload && sudo udevadm trigger
 ```
+
+After that, unplug and re-plug the printer and start a new login session (or run `newgrp lp` in the current shell). The rule persists across reboots.
 
 ## Project layout
 
@@ -207,18 +221,32 @@ tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
 
 ## USB アクセス権の設定
 
-このツールは libusb 経由でプリンターと通信します。多くの Linux 環境では root 権限か、以下の udev ルールが必要です。
+このツールは libusb 経由でプリンターと通信します。多くの Linux 環境では、一般ユーザーはデフォルトで USB デバイスノードへの**読み書きアクセス権**を持っていません。権限がない場合、ツール実行時に "permission denied" エラーが発生します。
+
+推奨される対処法は、`lp` グループのメンバーに読み書きアクセスを付与する永続的な udev ルールの作成です。以下のファイルを作成してください：
 
 ```
 # /etc/udev/rules.d/99-tepra.rules
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0d8a", ATTRS{idProduct}=="0103", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0d8a", ATTRS{idProduct}=="0103", GROUP="lp", MODE="0660"
 ```
 
-ルールを反映するには:
+`GROUP="lp"` でアクセスを `lp` グループに限定し、`MODE="0660"` でそのグループにのみ読み書き権限を付与します（全ユーザーに開放するより安全です）。
+
+次のコマンド 1 行で作成することもできます：
 
 ```sh
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="0d8a", ATTRS{idProduct}=="0103", GROUP="lp", MODE="0660"' \
+    | sudo tee /etc/udev/rules.d/99-tepra.rules
+```
+
+続けて、自分のユーザーを `lp` グループに追加し、ルールを反映してデバイスを再トリガーします：
+
+```sh
+sudo usermod -aG lp $USER
 sudo udevadm control --reload && sudo udevadm trigger
 ```
+
+プリンターを抜き差しし、新しいログインセッションを開始してください（または現在のシェルで `newgrp lp` を実行）。ルールは再起動後も有効です。
 
 ## プロジェクト構成
 

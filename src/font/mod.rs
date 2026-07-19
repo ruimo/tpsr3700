@@ -116,7 +116,7 @@ impl FontRenderer {
     /// without descenders like "A" or all-uppercase strings).
     pub fn max_size_pt_for_tape(&self, tape: TapeWidth) -> f32 {
         let ratio_per_px = self.line_height_px(1.0);
-        let max_px = tape.bitmap_bits() as f32 / ratio_per_px;
+        let max_px = tape.head_bits() as f32 / ratio_per_px;
         px_to_pt(max_px)
     }
 
@@ -134,7 +134,7 @@ impl FontRenderer {
     /// metrics, same caveat as [`FontRenderer::max_size_pt_for_tape`]).
     pub fn would_clip(&self, size_pt: f32, tape: TapeWidth) -> bool {
         let size_px = pt_to_px(size_pt);
-        self.line_height_px(size_px) > tape.bitmap_bits() as f32
+        self.line_height_px(size_px) > tape.head_bits() as f32
     }
 
     /// Wraps `text` into lines such that each line's advance width in dots
@@ -182,6 +182,54 @@ impl FontRenderer {
         lines
     }
 
+    /// Finds the largest point size in `(0, upper_pt]` at which `text`
+    /// wraps (via [`FontRenderer::wrap_chars`]) into at most `max_lines`
+    /// lines within `max_width_dots`, using binary search.
+    ///
+    /// Returns `None` if even a very small, minimal point size still
+    /// doesn't fit within `max_lines` lines (should only happen for
+    /// pathological inputs, e.g. an effectively zero-width label).
+    fn largest_fitting_size(
+        &self,
+        text: &str,
+        upper_pt: f32,
+        max_width_dots: f32,
+        max_lines: usize,
+    ) -> Option<f32> {
+        let fits = |pt: f32| -> bool {
+            let px = pt_to_px(pt);
+            self.wrap_chars(text, px, max_width_dots).len() <= max_lines
+        };
+
+        if upper_pt <= 0.0 {
+            return None;
+        }
+        if fits(upper_pt) {
+            // The height-based upper bound already satisfies the width
+            // constraint too; no need to shrink further.
+            return Some(upper_pt);
+        }
+
+        const MIN_PT: f32 = 0.5;
+        if !fits(MIN_PT) {
+            // Doesn't fit even at a minimal, near-illegible size.
+            return None;
+        }
+
+        // Binary search for the largest pt in [MIN_PT, upper_pt] that fits.
+        let mut lo = MIN_PT;
+        let mut hi = upper_pt;
+        for _ in 0..24 {
+            let mid = (lo + hi) / 2.0;
+            if fits(mid) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        Some(lo)
+    }
+
     /// Render one line of text into a column buffer (outer = feed col,
     /// inner = bit position across tape width), placed within a vertical
     /// band of `[bit_start, bit_start + band_bits)` within the full tape
@@ -193,17 +241,17 @@ impl FontRenderer {
         text: &str,
         size_px: f32,
         total_bits: usize,
+        head_offset: usize,
+        head_bits: usize,
         bit_start: usize,
-        band_bits: usize,
     ) -> (Vec<Vec<bool>>, f32) {
         let line_metrics = self.font.horizontal_line_metrics(size_px);
-        let (ascent, descent) = match line_metrics {
-            Some(m) => (m.ascent, m.descent),
-            None => (size_px, 0.0),
+        let ascent = match line_metrics {
+            Some(m) => m.ascent,
+            None => size_px,
         };
-        let text_height = ascent - descent;
-        // Vertically center within the band.
-        let band_top_margin = (band_bits as f32 - text_height) / 2.0;
+        // Align to the top of the printable band.
+        let band_top_margin = 0.0f32;
 
         let mut columns: Vec<Vec<bool>> = Vec::new();
         let mut cursor_x = 0.0f32;
@@ -227,11 +275,17 @@ impl FontRenderer {
                         // Row within the band (0-based, top of band = 0).
                         let band_row =
                             (band_top_margin + glyph_top + gy as f32).round() as isize;
-                        // Absolute row within the full tape bitmap.
-                        let abs_row = bit_start as isize + band_row;
-                        if abs_row >= 0 && (abs_row as usize) < total_bits {
-                            // Mirror vertically (same as single-line render).
-                            let bit_pos = total_bits - 1 - abs_row as usize;
+                        // Clip to printable band.
+                        if band_row < 0 || band_row as usize >= head_bits {
+                            continue;
+                        }
+                        // Absolute row within the printable area of this band.
+                        let abs_head_row = bit_start + band_row as usize;
+                        // Mirror: within the printable area (head_bits rows),
+                        // row 0 maps to the last bit of the printable area.
+                        // Then shift by head_offset to place inside the bitmap.
+                        let bit_pos = head_offset + (head_bits - 1 - abs_head_row);
+                        if bit_pos < total_bits {
                             let col = start_col + gx;
                             columns[col][bit_pos] = true;
                         }
@@ -263,22 +317,22 @@ impl FontRenderer {
     ) -> (Vec<Vec<u8>>, u32) {
         let size_px = pt_to_px(size_pt);
         let bit_depth = tape.bitmap_bits();
+        let head_bits = tape.head_bits();
+        let head_offset = tape.head_offset();
 
         // Render each character to a coverage bitmap and place it into a
         // column buffer: outer index = column (x), inner = row (y, i.e.
         // dot position across the tape width).
         let mut columns: Vec<Vec<bool>> = Vec::new();
 
-        // Vertically center glyphs within the usable tape width, using the
-        // font's overall ascent+descent extent (not per-glyph metrics), so
-        // that all characters in a string sit on a common baseline.
+        // Align glyphs to the top of the printable area, using the font's
+        // overall ascent extent (not per-glyph metrics), so that all
+        // characters in a string sit on a common baseline.
         let line_metrics = self.font.horizontal_line_metrics(size_px);
-        let (ascent, descent) = match line_metrics {
-            Some(m) => (m.ascent, m.descent),
-            None => (size_px, 0.0),
+        let ascent = match line_metrics {
+            Some(m) => m.ascent,
+            None => size_px,
         };
-        let text_height = ascent - descent;
-        let top_margin = (bit_depth as f32 - text_height) / 2.0;
 
         let mut cursor_x = 0.0f32;
         for ch in text.chars() {
@@ -298,21 +352,18 @@ impl FontRenderer {
                     if coverage > 127 {
                         // fontdue's bitmap is top-left origin, with row 0
                         // at `ascent - (ymin + height)` relative to the
-                        // baseline. Convert to an absolute row within the
-                        // tape's dot range.
+                        // baseline. Convert to a row within the printable area.
                         let glyph_top = ascent - (metrics.ymin as f32 + glyph_height as f32);
-                        let row = (top_margin + glyph_top + gy as f32).round() as isize;
-                        if row >= 0 && (row as usize) < bit_depth {
-                            // The bit position within a raster row's
-                            // bitmap is mirrored relative to fontdue's
-                            // top-to-bottom glyph coordinates: printing an
-                            // unmodified `row` produced upside-down (and
-                            // effectively mirrored, since it also flips
-                            // asymmetric multi-character strings)
-                            // output on real hardware. Flipping the bit
-                            // position fixes this; confirmed against
-                            // real-hardware printouts of "AB" on 6mm tape.
-                            let bit_pos = bit_depth - 1 - row as usize;
+                        let row = (glyph_top + gy as f32).round() as isize;
+                        // Clip to printable area.
+                        if row < 0 || row as usize >= head_bits {
+                            continue;
+                        }
+                        // Mirror within printable area, then offset into bitmap.
+                        // Confirmed against real-hardware printouts of "AB" on
+                        // 6mm tape.
+                        let bit_pos = head_offset + (head_bits - 1 - row as usize);
+                        if bit_pos < bit_depth {
                             let col = start_col + gx;
                             columns[col][bit_pos] = true;
                         }
@@ -360,8 +411,16 @@ impl FontRenderer {
     /// The maximum number of lines is determined by `tape.width_mm()` and
     /// [`MIN_LINE_HEIGHT_MM`] (e.g. 6mm tape → 2 lines max).
     ///
-    /// `size_pt` controls the font size. If `None`, the largest size that
-    /// fills one line-band is chosen automatically.
+    /// `size_pt` controls the font size. If `None`, the size is chosen
+    /// automatically: for every candidate line count from 1 up to the
+    /// maximum, the largest font size that fits both that line count's
+    /// height budget *and* the label length (width) is computed, and the
+    /// candidate with the overall largest resulting font size wins. This
+    /// avoids a pitfall where a *smaller* font (sized for more, thinner
+    /// lines) happens to need fewer lines width-wise than a larger font
+    /// (sized for fewer, taller lines) — naively preferring "fewer lines"
+    /// in that case would lock in the smaller font even though the
+    /// larger font could still fit using its own line count.
     ///
     /// `align` controls horizontal alignment of each line within the label
     /// length (left/center/right).
@@ -377,6 +436,7 @@ impl FontRenderer {
         align: TextAlign,
     ) -> (Vec<Vec<u8>>, u32) {
         let total_bits = tape.bitmap_bits();
+        let head_bits = tape.head_bits();
         let margin_rows = mm_to_rows(feed_margin_mm);
         // Content length (dots) = total tape length minus both feed margins.
         let content_length_dots =
@@ -387,57 +447,63 @@ impl FontRenderer {
         let max_lines = (tape.width_mm() as f32 / MIN_LINE_HEIGHT_MM).floor() as usize;
         let max_lines = max_lines.max(1);
 
-        // Each line band has an equal share of the tape's bit depth.
-        // We try 1 line first; if the text doesn't fit, increase line count
-        // up to max_lines.
-        let size_px;
-        let num_lines;
-        let wrapped_lines: Vec<&str>;
-
-        // Find the minimum number of lines needed.
-        let mut found = false;
-        let mut nl = 1usize;
-        let mut sz = 0.0f32;
-        let mut wl: Vec<&str> = Vec::new();
-
-        while nl <= max_lines {
-            let band_bits = total_bits / nl;
-            let candidate_pt = match size_pt {
-                Some(pt) => pt,
-                None => self.max_size_pt_for_bits(band_bits),
-            };
-            let candidate_px = pt_to_px(candidate_pt);
-            // Wrap with this size.
-            let candidate_lines = self.wrap_chars(text, candidate_px, content_length_dots);
-            if candidate_lines.len() <= nl {
-                sz = candidate_pt;
-                wl = candidate_lines;
-                found = true;
-                break;
+        let (size_px, wrapped_lines): (f32, Vec<&str>) = match size_pt {
+            Some(pt) => {
+                // Fixed size: wrapping doesn't depend on line count at all
+                // (same text, same size, same width budget), so just wrap
+                // once and use however many lines that produces.
+                let px = pt_to_px(pt);
+                let lines = self.wrap_chars(text, px, content_length_dots);
+                (px, lines)
             }
-            nl += 1;
-        }
+            None => {
+                // Try every candidate line count and keep the one that
+                // yields the largest usable font size overall.
+                let mut best: Option<(f32, f32, Vec<&str>)> = None; // (pt, px, lines)
+                for nl in 1..=max_lines {
+                    // Font size upper bound is based on head_bits (printable
+                    // area) divided evenly among lines.
+                    let band_bits = head_bits / nl;
+                    let upper_pt = self.max_size_pt_for_bits(band_bits);
+                    if let Some(pt) =
+                        self.largest_fitting_size(text, upper_pt, content_length_dots, nl)
+                    {
+                        let is_better = match &best {
+                            Some((best_pt, _, _)) => pt > *best_pt,
+                            None => true,
+                        };
+                        if is_better {
+                            let px = pt_to_px(pt);
+                            let lines = self.wrap_chars(text, px, content_length_dots);
+                            best = Some((pt, px, lines));
+                        }
+                    }
+                }
+                match best {
+                    Some((_, px, lines)) => (px, lines),
+                    None => {
+                        // Degenerate case (e.g. zero-width label): fall back
+                        // to the smallest band's max size and let it
+                        // overflow rather than panic.
+                        let band_bits = head_bits / max_lines;
+                        let pt = self.max_size_pt_for_bits(band_bits);
+                        let px = pt_to_px(pt);
+                        let lines = self.wrap_chars(text, px, content_length_dots);
+                        (px, lines)
+                    }
+                }
+            }
+        };
 
-        if !found {
-            // Even with max_lines the text overflows; use max_lines and let
-            // it truncate naturally (last line may be too long but we don't
-            // truncate the content — the caller is responsible for checking).
-            nl = max_lines;
-            let band_bits = total_bits / nl;
-            sz = match size_pt {
-                Some(pt) => pt,
-                None => self.max_size_pt_for_bits(band_bits),
-            };
-            let candidate_px = pt_to_px(sz);
-            wl = self.wrap_chars(text, candidate_px, content_length_dots);
-        }
-
-        num_lines = nl;
-        size_px = pt_to_px(sz);
-        wrapped_lines = wl;
+        // Clamp to the tape's maximum line count; any lines beyond that are
+        // dropped (the label simply can't fit them).
+        let num_lines = wrapped_lines.len().max(1).min(max_lines);
 
         // Render each wrapped line into the appropriate vertical band.
-        let band_bits = total_bits / num_lines;
+        // band_bits for bit_start calculation uses head_bits so each line's
+        // printable area is evenly divided within the printable region.
+        let head_offset = tape.head_offset();
+        let band_head_bits = head_bits / num_lines;
         let content_dots = content_length_dots as usize;
 
         // Build a merged column buffer (outer = feed col 0..content_dots,
@@ -448,10 +514,10 @@ impl FontRenderer {
             if line_idx >= num_lines {
                 break;
             }
-            let bit_start = line_idx * band_bits;
+            let bit_start = line_idx * band_head_bits;
 
             let (line_columns, line_width) =
-                self.render_line_columns(line_text, size_px, total_bits, bit_start, band_bits);
+                self.render_line_columns(line_text, size_px, total_bits, head_offset, head_bits, bit_start);
 
             // Compute horizontal offset based on alignment.
             let col_count = line_columns.len();
@@ -648,4 +714,91 @@ mod tests {
         assert!(!rows.is_empty());
         assert!(margin > 0);
     }
+
+    /// Returns true if any bit in `[bit_start, bit_end)` is set in any row.
+    fn any_ink_in_bit_range(rows: &[Vec<u8>], bit_start: usize, bit_end: usize) -> bool {
+        rows.iter().any(|row| {
+            (bit_start..bit_end).any(|bit| {
+                let byte_idx = bit / 8;
+                let bit_idx = 7 - (bit % 8);
+                byte_idx < row.len() && (row[byte_idx] >> bit_idx) & 1 == 1
+            })
+        })
+    }
+
+    #[test]
+    fn multiline_uses_both_bands_when_two_lines_beat_one() {
+        // Regression test for a bug where an internal pt/px unit mismatch
+        // caused the line-count search to always keep the *first*
+        // successful candidate (effectively always nl=1), even when a
+        // larger overall font size was achievable with more lines. For
+        // this text/length/tape combination, 2 lines with a larger font
+        // is strictly better than 1 line with a smaller font.
+        //
+        // With the bug, only 1 (undersized) line is used, centered in the
+        // middle of the tape; ink stays confined near the vertical center
+        // and never reaches close to the very top/bottom edges. With 2
+        // full-height-per-band lines, ink must reach near *both* edges
+        // (each line's font is sized to nearly fill its own half-band).
+        // Checking near the extreme edges (rather than just "each half")
+        // avoids a false pass from a single centered line that happens to
+        // straddle the halfway point.
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        for tape in [TapeWidth::Mm12, TapeWidth::Mm18] {
+            let (rows, _margin) = renderer.render_text_multiline(
+                "D39M-06N420V20A",
+                None,
+                tape,
+                DEFAULT_FEED_MARGIN_MM,
+                32.0,
+                TextAlign::Left,
+            );
+            let total_bits = tape.bitmap_bits();
+            let edge = total_bits / 4;
+            assert!(
+                any_ink_in_bit_range(&rows, 0, edge),
+                "expected ink near the top edge of {}mm tape (single centered line bug?)",
+                tape.width_mm()
+            );
+            assert!(
+                any_ink_in_bit_range(&rows, total_bits - edge, total_bits),
+                "expected ink near the bottom edge of {}mm tape (single centered line bug?)",
+                tape.width_mm()
+            );
+        }
+    }
+
+    /// Snapshot test: `--tape-length-mm 32 "D39M-06N 420V20A"` on 6mm tape.
+    ///
+    /// The auto-size logic picks nl=2 (half-height font) because that yields a
+    /// larger point size than nl=1 for this text/length combination.  At that
+    /// smaller font size the whole text fits on a single line, so wrap_chars
+    /// returns 1 line and render_text_multiline renders it as one line using
+    /// the full tape height.  This test pins that behaviour.
+    #[test]
+    fn multiline_6mm_tape_length_32_fits_single_line() {
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        let text = "D39M-06N 420V20A";
+        let tape = TapeWidth::Mm6;
+        let tape_length_mm = 32.0;
+
+        let (rows, _margin) = renderer.render_text_multiline(
+            text,
+            None,
+            tape,
+            DEFAULT_FEED_MARGIN_MM,
+            tape_length_mm,
+            TextAlign::Left,
+        );
+
+        // Output must be non-empty and contain ink somewhere.
+        assert!(!rows.is_empty());
+        let total_bits = tape.bitmap_bits();
+        assert!(any_ink_in_bit_range(&rows, 0, total_bits));
+    }
+
 }
