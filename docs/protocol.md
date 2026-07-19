@@ -404,3 +404,8 @@ need further captures or hardware experimentation to pin down:
 - `captures/obtain-tape-width.pcap` — USBPcap capture of the driver
   probing the tape width.
 - `src/tepra/` — the Rust implementation described above.
+- `examples/probe.rs` — opens the printer over USB and reports its
+  device ID / tape info, without printing anything.
+- `examples/send_raw.rs` — sends a raw job file (e.g. one produced via
+  `--dump`, or one of the `tests/fixtures/*.prn` files above) directly
+  to the printer, bypassing font rendering.
