@@ -26,10 +26,10 @@ Print text labels directly from the command line — no Windows, no vendor softw
 - `libusb`:
   - Debian/Ubuntu: `sudo apt-get install libusb-1.0-0-dev`
   - macOS: `brew install libusb`
-- A TrueType/OpenType font file. The default is
-  `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` (present on
-  most Debian/Ubuntu systems via the `fonts-noto-cjk` package). Any
-  other `.ttf`/`.otf`/`.ttc` file works via `--font <PATH>`.
+
+No font installation is required — **BIZ UDPゴシック Regular** is bundled
+directly in the binary. To use a different font, pass `--font <PATH>` with
+any `.ttf`/`.otf`/`.ttc` file.
 
 ## Build
 
@@ -55,7 +55,7 @@ tpsr3700 [OPTIONS] <TEXT>
 | `--bottom-margin <DOTS>` | `8` | Non-printing margin at the bottom edge of the tape, in dots. |
 | `--max-tape-length-mm <MM>` | — | Total label length in mm (including margins). Enables multi-line wrapping when the text does not fit in one line. |
 | `--align <ALIGN>` | `left` | Per-line alignment: `left`, `center`, or `right`. Only meaningful with `--max-tape-length-mm`. |
-| `--font <PATH>` | `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` | Path to a `.ttf`/`.otf`/`.ttc` font file. |
+| `--font <PATH>` | bundled BIZ UDPゴシック | Path to a `.ttf`/`.otf`/`.ttc` font file. Overrides the bundled font. |
 | `--dump <PATH>` | — | Write the raw job bytes to a file (in addition to, or instead of, printing). |
 | `--no-print` | — | Skip sending the job to the printer. Useful with `--dump`. |
 
@@ -134,7 +134,8 @@ assets/
   header_18mm_template.bin   Base template for the job header
 captures/           Raw .prn job files captured for various configurations
 docs/protocol.md    Protocol documentation
-testdata/fonts/     BIZ UDGothic font bundled for tests (OFL-1.1)
+src/font/BIZUDPGothic-Regular.ttf   BIZ UDPゴシック Regular bundled in the binary (OFL-1.1)
+testdata/fonts/     BIZ UDGothic font used in snapshot tests (OFL-1.1)
 tests/fixtures/     Golden .prn files used in byte-exact reconstruction tests
 ```
 
@@ -178,9 +179,9 @@ Windows も純正ソフトも不要で、コマンドラインから直接テキ
 - `libusb`:
   - Debian/Ubuntu: `sudo apt-get install libusb-1.0-0-dev`
   - macOS: `brew install libusb`
-- TrueType/OpenType フォントファイル。デフォルトは
-  `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`（Debian/Ubuntu では
-  `fonts-noto-cjk` パッケージで入る）。`--font <PATH>` で任意のフォントを指定可能。
+
+フォントのインストールは不要です。**BIZ UDPゴシック Regular** をバイナリに直接埋め込んでいます。
+別のフォントを使いたい場合は `--font <PATH>` で `.ttf`/`.otf`/`.ttc` ファイルを指定してください。
 
 ## ビルド
 
@@ -206,7 +207,7 @@ tpsr3700 [オプション] <テキスト>
 | `--bottom-margin <DOTS>` | `8` | テープ下端の非印字マージン（ドット数）。 |
 | `--max-tape-length-mm <MM>` | — | ラベル全長（mm、マージン込み）。指定すると、1 行に収まらないテキストを複数行に折り返す。 |
 | `--align <ALIGN>` | `left` | 各行の横方向揃え: `left`（左寄せ）・`center`（中央）・`right`（右寄せ）。`--max-tape-length-mm` 指定時のみ有効。 |
-| `--font <PATH>` | `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` | フォントファイルのパス（`.ttf`/`.otf`/`.ttc`）。 |
+| `--font <PATH>` | バンドル済み BIZ UDPゴシック | フォントファイルのパス（`.ttf`/`.otf`/`.ttc`）。バンドルフォントを上書きします。 |
 | `--dump <PATH>` | — | 生のジョブバイト列をファイルに書き出す（印刷と併用可）。 |
 | `--no-print` | — | プリンターへの送信をスキップ。`--dump` と組み合わせて使用。 |
 
@@ -285,7 +286,8 @@ assets/
   header_18mm_template.bin   ジョブヘッダーのベーステンプレート
 captures/           各種設定でキャプチャした生 .prn ファイル
 docs/protocol.md    プロトコル仕様書
-testdata/fonts/     テスト用バンドルフォント BIZ UDGothic（OFL-1.1）
+src/font/BIZUDPGothic-Regular.ttf   バイナリに埋め込まれる BIZ UDPゴシック Regular（OFL-1.1）
+testdata/fonts/     スナップショットテスト用 BIZ UDGothic（OFL-1.1）
 tests/fixtures/     バイト完全一致テスト用ゴールデン .prn ファイル
 ```
 

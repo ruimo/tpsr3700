@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use tpsr3700::font::{FontRenderer, TextAlign, DEFAULT_FONT_PATH, DEFAULT_FEED_MARGIN_MM};
+use tpsr3700::font::{FontRenderer, TextAlign, DEFAULT_FONT_BYTES, DEFAULT_FEED_MARGIN_MM};
 use tpsr3700::tepra::builder::build_print_job;
 use tpsr3700::tepra::TapeWidth;
 
@@ -162,10 +162,10 @@ struct Args {
     #[arg(long, default_value = "left")]
     align: TextAlign,
 
-    /// Path to a TrueType/OpenType font file (.ttf/.otf/.ttc). Defaults to
-    /// the system's Noto Sans CJK JP font.
-    #[arg(long, default_value = DEFAULT_FONT_PATH)]
-    font: String,
+    /// Path to a TrueType/OpenType font file (.ttf/.otf/.ttc).
+    /// When omitted, the bundled BIZ UDPゴシック Regular is used.
+    #[arg(long)]
+    font: Option<String>,
 
     /// Write the generated raw TEPRA job bytes to this file instead of (or
     /// in addition to) sending it to the printer. Useful for debugging
@@ -223,7 +223,11 @@ fn main() -> Result<()> {
         }
     };
 
-    let renderer = FontRenderer::load(&args.font)?;
+    let renderer = match &args.font {
+        Some(path) => FontRenderer::load(path)?,
+        None => FontRenderer::from_bytes(DEFAULT_FONT_BYTES)
+            .map_err(|e| anyhow::anyhow!("bundled font failed to load: {e}"))?,
+    };
 
     let (rows, margin) = if let Some(tape_length_mm) = args.max_tape_length_mm {
         // Multi-line mode: wrap text to fit the specified tape length.
