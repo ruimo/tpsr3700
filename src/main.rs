@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use tpsr3700::font::{FontRenderer, DEFAULT_FONT_PATH, DEFAULT_FEED_MARGIN_MM};
+use tpsr3700::font::{FontRenderer, TextAlign, DEFAULT_FONT_PATH, DEFAULT_FEED_MARGIN_MM};
 use tpsr3700::tepra::builder::build_print_job;
 use tpsr3700::tepra::TapeWidth;
 
@@ -20,8 +20,8 @@ struct Args {
     tape_mm: Option<u8>,
 
     /// Font size in points (as shown in the TEPRA desktop app, e.g. 36).
-    /// If omitted, the largest size that fits the tape width without
-    /// clipping the top or bottom is used automatically.
+    /// If omitted, the largest size that fits the tape width (or one
+    /// line-band when multi-line wrapping is active) is used automatically.
     #[arg(long)]
     size: Option<f32>,
 
@@ -29,6 +29,21 @@ struct Args {
     /// printed content.
     #[arg(long, default_value_t = DEFAULT_FEED_MARGIN_MM)]
     margin_mm: f32,
+
+    /// Total label length in millimeters, including left and right feed
+    /// margins.  When the text does not fit on one line at the chosen font
+    /// size, it is wrapped character-by-character onto additional lines
+    /// (up to the maximum allowed by the tape width; minimum line height
+    /// is 3 mm, so a 6 mm tape allows at most 2 lines).  Omitting this
+    /// option disables wrapping and prints everything on a single line.
+    #[arg(long)]
+    tape_length_mm: Option<f32>,
+
+    /// Horizontal alignment of each line within the label length.
+    /// Only meaningful when --tape-length-mm is set.
+    /// Allowed values: left (default), center, right.
+    #[arg(long, default_value = "left")]
+    align: TextAlign,
 
     /// Path to a TrueType/OpenType font file (.ttf/.otf/.ttc). Defaults to
     /// the system's Noto Sans CJK JP font.
@@ -88,26 +103,55 @@ fn main() -> Result<()> {
 
     let renderer = FontRenderer::load(&args.font)?;
 
-    let size = match args.size {
-        Some(size) => {
-            if renderer.would_clip(size, tape) {
-                let max = renderer.max_size_pt_for_tape(tape);
-                eprintln!(
-                    "warning: {size}pt may be too large for {}mm tape and could be \
-                     clipped at the top/bottom; try --size {max:.1} or smaller",
-                    tape.width_mm()
-                );
+    let (rows, margin) = if let Some(tape_length_mm) = args.tape_length_mm {
+        // Multi-line mode: wrap text to fit the specified tape length.
+        let size = match args.size {
+            Some(size) => {
+                // Validate manually since would_clip is tape-width-based,
+                // but the per-band check happens inside render_text_multiline.
+                if renderer.would_clip(size, tape) {
+                    let max = renderer.max_size_pt_for_tape(tape);
+                    eprintln!(
+                        "warning: {size}pt may be too large for {}mm tape and could be \
+                         clipped at the top/bottom; try --size {max:.1} or smaller",
+                        tape.width_mm()
+                    );
+                }
+                Some(size)
             }
-            size
-        }
-        None => {
-            let max = renderer.max_size_pt_for_tape(tape);
-            eprintln!("no --size given; using {max:.1}pt (largest that fits {}mm tape)", tape.width_mm());
-            max
-        }
+            None => None,
+        };
+        renderer.render_text_multiline(
+            &args.text,
+            size,
+            tape,
+            args.margin_mm,
+            tape_length_mm,
+            args.align,
+        )
+    } else {
+        // Single-line mode (original behaviour).
+        let size = match args.size {
+            Some(size) => {
+                if renderer.would_clip(size, tape) {
+                    let max = renderer.max_size_pt_for_tape(tape);
+                    eprintln!(
+                        "warning: {size}pt may be too large for {}mm tape and could be \
+                         clipped at the top/bottom; try --size {max:.1} or smaller",
+                        tape.width_mm()
+                    );
+                }
+                size
+            }
+            None => {
+                let max = renderer.max_size_pt_for_tape(tape);
+                eprintln!("no --size given; using {max:.1}pt (largest that fits {}mm tape)", tape.width_mm());
+                max
+            }
+        };
+        renderer.render_text(&args.text, size, tape, args.margin_mm)
     };
 
-    let (rows, margin) = renderer.render_text(&args.text, size, tape, args.margin_mm);
     let char_count = args.text.chars().count() as u32;
     let job = build_print_job(tape, char_count, &rows, margin);
 

@@ -29,6 +29,34 @@ const DOTS_PER_INCH: f32 = 208.0;
 /// setting.
 pub const DEFAULT_FEED_MARGIN_MM: f32 = 3.0;
 
+/// Minimum height of a single printed line in millimeters.
+/// A 6mm tape allows at most 2 lines (6 / 3 = 2).
+const MIN_LINE_HEIGHT_MM: f32 = 3.0;
+
+/// Text alignment for multi-line (and single-line) output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    /// Left-align each line (default).
+    #[default]
+    Left,
+    /// Center each line within the tape length.
+    Center,
+    /// Right-align each line.
+    Right,
+}
+
+impl std::str::FromStr for TextAlign {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "left" => Ok(TextAlign::Left),
+            "center" => Ok(TextAlign::Center),
+            "right" => Ok(TextAlign::Right),
+            other => Err(format!("unknown alignment '{other}'; expected left, center, or right")),
+        }
+    }
+}
+
 /// Converts a length in millimeters to a number of raster rows (feed
 /// direction dots), using [`DOTS_PER_INCH`].
 ///
@@ -92,12 +120,129 @@ impl FontRenderer {
         px_to_pt(max_px)
     }
 
+    /// Returns the largest point size at which this font's line height fits
+    /// within `bit_height` bits (used for multi-line rendering where each
+    /// line occupies only a fraction of the tape height).
+    fn max_size_pt_for_bits(&self, bit_height: usize) -> f32 {
+        let ratio_per_px = self.line_height_px(1.0);
+        let max_px = bit_height as f32 / ratio_per_px;
+        px_to_pt(max_px)
+    }
+
     /// Returns `true` if rendering at `size_pt` would clip the top or
     /// bottom of the text on `tape` (based on the font's overall vertical
     /// metrics, same caveat as [`FontRenderer::max_size_pt_for_tape`]).
     pub fn would_clip(&self, size_pt: f32, tape: TapeWidth) -> bool {
         let size_px = pt_to_px(size_pt);
         self.line_height_px(size_px) > tape.bitmap_bits() as f32
+    }
+
+    /// Wraps `text` into lines such that each line's advance width in dots
+    /// does not exceed `max_width_dots`.  Wrapping is character-granular
+    /// (suitable for label printing, where word-wrap is rarely meaningful).
+    /// Explicit `\n` characters always force a line break.
+    /// Returns the list of `&str` slices that constitute the wrapped lines.
+    fn wrap_chars<'a>(&self, text: &'a str, size_px: f32, max_width_dots: f32) -> Vec<&'a str> {
+        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        if chars.is_empty() {
+            return vec![""];
+        }
+
+        let mut lines: Vec<&'a str> = Vec::new();
+        let mut line_start_idx = 0; // byte offset in `text`
+        let mut line_start_char = 0; // char index
+        let mut current_width = 0.0f32;
+
+        for (ci, (byte_idx, ch)) in chars.iter().enumerate() {
+            // Explicit newline: flush current line and start a new one.
+            if *ch == '\n' {
+                lines.push(&text[line_start_idx..*byte_idx]);
+                line_start_idx = byte_idx + '\n'.len_utf8();
+                line_start_char = ci + 1;
+                current_width = 0.0;
+                continue;
+            }
+
+            let (metrics, _) = self.font.rasterize(*ch, size_px);
+            let advance = metrics.advance_width;
+
+            if current_width + advance > max_width_dots && ci > line_start_char {
+                // Flush the current line (up to but not including this char).
+                let end_byte = *byte_idx;
+                lines.push(&text[line_start_idx..end_byte]);
+                line_start_idx = *byte_idx;
+                line_start_char = ci;
+                current_width = 0.0;
+            }
+            current_width += advance;
+        }
+
+        // Push the remaining text as the last line.
+        lines.push(&text[line_start_idx..]);
+        lines
+    }
+
+    /// Render one line of text into a column buffer (outer = feed col,
+    /// inner = bit position across tape width), placed within a vertical
+    /// band of `[bit_start, bit_start + band_bits)` within the full tape
+    /// height (`total_bits`).
+    ///
+    /// Returns `(columns, total_advance_dots)`.
+    fn render_line_columns(
+        &self,
+        text: &str,
+        size_px: f32,
+        total_bits: usize,
+        bit_start: usize,
+        band_bits: usize,
+    ) -> (Vec<Vec<bool>>, f32) {
+        let line_metrics = self.font.horizontal_line_metrics(size_px);
+        let (ascent, descent) = match line_metrics {
+            Some(m) => (m.ascent, m.descent),
+            None => (size_px, 0.0),
+        };
+        let text_height = ascent - descent;
+        // Vertically center within the band.
+        let band_top_margin = (band_bits as f32 - text_height) / 2.0;
+
+        let mut columns: Vec<Vec<bool>> = Vec::new();
+        let mut cursor_x = 0.0f32;
+
+        for ch in text.chars() {
+            let (metrics, bitmap) = self.font.rasterize(ch, size_px);
+            let glyph_width = metrics.width;
+            let glyph_height = metrics.height;
+
+            let start_col = cursor_x.round() as usize;
+            while columns.len() < start_col + glyph_width.max(1) {
+                columns.push(vec![false; total_bits]);
+            }
+
+            for gy in 0..glyph_height {
+                for gx in 0..glyph_width {
+                    let coverage = bitmap[gy * glyph_width + gx];
+                    if coverage > 127 {
+                        let glyph_top =
+                            ascent - (metrics.ymin as f32 + glyph_height as f32);
+                        // Row within the band (0-based, top of band = 0).
+                        let band_row =
+                            (band_top_margin + glyph_top + gy as f32).round() as isize;
+                        // Absolute row within the full tape bitmap.
+                        let abs_row = bit_start as isize + band_row;
+                        if abs_row >= 0 && (abs_row as usize) < total_bits {
+                            // Mirror vertically (same as single-line render).
+                            let bit_pos = total_bits - 1 - abs_row as usize;
+                            let col = start_col + gx;
+                            columns[col][bit_pos] = true;
+                        }
+                    }
+                }
+            }
+
+            cursor_x += metrics.advance_width;
+        }
+
+        (columns, cursor_x)
     }
 
     /// Render `text` at the given point size (matching the size shown in
@@ -206,6 +351,165 @@ impl FontRenderer {
 
         (padded, margin_rows)
     }
+
+    /// Multi-line variant of [`render_text`].
+    ///
+    /// `tape_length_mm` is the total label length including left and right
+    /// feed margins.  If the text does not fit in one line within that
+    /// length, it is wrapped character-by-character onto additional lines.
+    /// The maximum number of lines is determined by `tape.width_mm()` and
+    /// [`MIN_LINE_HEIGHT_MM`] (e.g. 6mm tape → 2 lines max).
+    ///
+    /// `size_pt` controls the font size. If `None`, the largest size that
+    /// fills one line-band is chosen automatically.
+    ///
+    /// `align` controls horizontal alignment of each line within the label
+    /// length (left/center/right).
+    ///
+    /// Returns `(rows, margin_rows)` in the same format as [`render_text`].
+    pub fn render_text_multiline(
+        &self,
+        text: &str,
+        size_pt: Option<f32>,
+        tape: TapeWidth,
+        feed_margin_mm: f32,
+        tape_length_mm: f32,
+        align: TextAlign,
+    ) -> (Vec<Vec<u8>>, u32) {
+        let total_bits = tape.bitmap_bits();
+        let margin_rows = mm_to_rows(feed_margin_mm);
+        // Content length (dots) = total tape length minus both feed margins.
+        let content_length_dots =
+            mm_to_rows(tape_length_mm) as f32 - 2.0 * margin_rows as f32;
+        let content_length_dots = content_length_dots.max(1.0);
+
+        // Maximum number of lines that fit on this tape.
+        let max_lines = (tape.width_mm() as f32 / MIN_LINE_HEIGHT_MM).floor() as usize;
+        let max_lines = max_lines.max(1);
+
+        // Each line band has an equal share of the tape's bit depth.
+        // We try 1 line first; if the text doesn't fit, increase line count
+        // up to max_lines.
+        let size_px;
+        let num_lines;
+        let wrapped_lines: Vec<&str>;
+
+        // Find the minimum number of lines needed.
+        let mut found = false;
+        let mut nl = 1usize;
+        let mut sz = 0.0f32;
+        let mut wl: Vec<&str> = Vec::new();
+
+        while nl <= max_lines {
+            let band_bits = total_bits / nl;
+            let candidate_pt = match size_pt {
+                Some(pt) => pt,
+                None => self.max_size_pt_for_bits(band_bits),
+            };
+            let candidate_px = pt_to_px(candidate_pt);
+            // Wrap with this size.
+            let candidate_lines = self.wrap_chars(text, candidate_px, content_length_dots);
+            if candidate_lines.len() <= nl {
+                sz = candidate_pt;
+                wl = candidate_lines;
+                found = true;
+                break;
+            }
+            nl += 1;
+        }
+
+        if !found {
+            // Even with max_lines the text overflows; use max_lines and let
+            // it truncate naturally (last line may be too long but we don't
+            // truncate the content — the caller is responsible for checking).
+            nl = max_lines;
+            let band_bits = total_bits / nl;
+            sz = match size_pt {
+                Some(pt) => pt,
+                None => self.max_size_pt_for_bits(band_bits),
+            };
+            let candidate_px = pt_to_px(sz);
+            wl = self.wrap_chars(text, candidate_px, content_length_dots);
+        }
+
+        num_lines = nl;
+        size_px = pt_to_px(sz);
+        wrapped_lines = wl;
+
+        // Render each wrapped line into the appropriate vertical band.
+        let band_bits = total_bits / num_lines;
+        let content_dots = content_length_dots as usize;
+
+        // Build a merged column buffer (outer = feed col 0..content_dots,
+        // inner = bit position across tape width 0..total_bits).
+        let mut merged: Vec<Vec<bool>> = vec![vec![false; total_bits]; content_dots];
+
+        for (line_idx, &line_text) in wrapped_lines.iter().enumerate() {
+            if line_idx >= num_lines {
+                break;
+            }
+            let bit_start = line_idx * band_bits;
+
+            let (line_columns, line_width) =
+                self.render_line_columns(line_text, size_px, total_bits, bit_start, band_bits);
+
+            // Compute horizontal offset based on alignment.
+            let col_count = line_columns.len();
+            let line_width_dots = line_width.round() as usize;
+            let offset = match align {
+                TextAlign::Left => 0,
+                TextAlign::Center => {
+                    if content_dots > line_width_dots {
+                        (content_dots - line_width_dots) / 2
+                    } else {
+                        0
+                    }
+                }
+                TextAlign::Right => {
+                    if content_dots > line_width_dots {
+                        content_dots - line_width_dots
+                    } else {
+                        0
+                    }
+                }
+            };
+
+            for (ci, col_bits) in line_columns.iter().enumerate() {
+                let dest_col = offset + ci;
+                if dest_col < content_dots {
+                    for (bi, &bit) in col_bits.iter().enumerate() {
+                        if bit {
+                            merged[dest_col][bi] = true;
+                        }
+                    }
+                }
+            }
+            let _ = col_count; // suppress unused warning
+        }
+
+        // Pack merged columns into raster rows.
+        let content_rows: Vec<Vec<u8>> = merged
+            .iter()
+            .map(|col| pack_bits(col, tape.bitmap_bytes()))
+            .collect();
+
+        // Trim leading/trailing blank columns.
+        let first_nonblank = content_rows.iter().position(|r| r.iter().any(|&b| b != 0));
+        let last_nonblank = content_rows.iter().rposition(|r| r.iter().any(|&b| b != 0));
+
+        let trimmed = match (first_nonblank, last_nonblank) {
+            (Some(first), Some(last)) => content_rows[first..=last].to_vec(),
+            _ => Vec::new(),
+        };
+
+        let blank_row = vec![0u8; tape.bitmap_bytes()];
+        let mut padded = Vec::with_capacity(trimmed.len() + 2 * margin_rows as usize);
+        padded.extend(std::iter::repeat(blank_row.clone()).take(margin_rows as usize));
+        padded.extend(trimmed);
+        padded.extend(std::iter::repeat(blank_row).take(margin_rows as usize));
+
+        (padded, margin_rows)
+    }
 }
 
 /// Packs a boolean slice (MSB-first) into bytes.
@@ -268,5 +572,80 @@ mod tests {
         // 36pt was captured to clip visibly on 12mm tape in real hardware
         // testing; the much narrower 6mm tape should clip it too.
         assert!(renderer.would_clip(36.0, TapeWidth::Mm6));
+    }
+
+    #[test]
+    fn text_align_from_str() {
+        assert_eq!("left".parse::<TextAlign>().unwrap(), TextAlign::Left);
+        assert_eq!("center".parse::<TextAlign>().unwrap(), TextAlign::Center);
+        assert_eq!("right".parse::<TextAlign>().unwrap(), TextAlign::Right);
+        assert!("other".parse::<TextAlign>().is_err());
+    }
+
+    #[test]
+    fn wrap_chars_fits_single_line() {
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        let size_px = pt_to_px(12.0);
+        // A very wide max width should give a single line.
+        let lines = renderer.wrap_chars("ABC", size_px, 10000.0);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], "ABC");
+    }
+
+    #[test]
+    fn wrap_chars_wraps_when_narrow() {
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        let size_px = pt_to_px(12.0);
+        // Force each character onto its own line by using width = 1.
+        let lines = renderer.wrap_chars("ABC", size_px, 1.0);
+        // Should produce at least 2 lines for "ABC".
+        assert!(lines.len() >= 2);
+    }
+
+    #[test]
+    fn wrap_chars_respects_explicit_newline() {
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        let size_px = pt_to_px(12.0);
+        // Even with a very wide max width, \n must split the string.
+        let lines = renderer.wrap_chars("AB\nCD", size_px, 10000.0);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "AB");
+        assert_eq!(lines[1], "CD");
+    }
+
+    #[test]
+    fn wrap_chars_newline_at_start_and_end() {
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        let size_px = pt_to_px(12.0);
+        let lines = renderer.wrap_chars("\nAB\n", size_px, 10000.0);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "");
+        assert_eq!(lines[1], "AB");
+        assert_eq!(lines[2], "");
+    }
+
+    #[test]
+    fn render_multiline_produces_rows() {
+        let Some(renderer) = default_renderer() else {
+            return;
+        };
+        let (rows, margin) = renderer.render_text_multiline(
+            "Hello World",
+            None,
+            TapeWidth::Mm18,
+            DEFAULT_FEED_MARGIN_MM,
+            50.0,
+            TextAlign::Left,
+        );
+        assert!(!rows.is_empty());
+        assert!(margin > 0);
     }
 }
