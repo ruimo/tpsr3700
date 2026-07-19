@@ -51,6 +51,8 @@ tpsr3700 [OPTIONS] <TEXT>
 | `--size <PT>` | auto | Font size in points (as shown in the TEPRA app, e.g. `36`). Omit for the largest size that fits. |
 | `--left-margin-mm <MM>` | `10.0` | Blank feed margin (mm) added before the printed content (left side as the label exits the printer). |
 | `--right-margin-mm <MM>` | `3.0` | Blank feed margin (mm) added after the printed content (right side). |
+| `--top-margin <DOTS>` | `0` | Non-printing margin at the top edge of the tape, in dots. |
+| `--bottom-margin <DOTS>` | `8` | Non-printing margin at the bottom edge of the tape, in dots. |
 | `--max-tape-length-mm <MM>` | — | Total label length in mm (including margins). Enables multi-line wrapping when the text does not fit in one line. |
 | `--align <ALIGN>` | `left` | Per-line alignment: `left`, `center`, or `right`. Only meaningful with `--max-tape-length-mm`. |
 | `--font <PATH>` | `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` | Path to a `.ttf`/`.otf`/`.ttc` font file. |
@@ -200,6 +202,8 @@ tpsr3700 [オプション] <テキスト>
 | `--size <PT>` | 自動 | フォントサイズ（ポイント、TEPRA アプリの表示と同じ。例: `36`）。省略時はテープに収まる最大サイズ。 |
 | `--left-margin-mm <MM>` | `10.0` | 印字内容の前（ラベルがプリンターから出る側＝左端）に追加する余白（mm）。 |
 | `--right-margin-mm <MM>` | `3.0` | 印字内容の後（右端）に追加する余白（mm）。 |
+| `--top-margin <DOTS>` | `0` | テープ上端の非印字マージン（ドット数）。 |
+| `--bottom-margin <DOTS>` | `8` | テープ下端の非印字マージン（ドット数）。 |
 | `--max-tape-length-mm <MM>` | — | ラベル全長（mm、マージン込み）。指定すると、1 行に収まらないテキストを複数行に折り返す。 |
 | `--align <ALIGN>` | `left` | 各行の横方向揃え: `left`（左寄せ）・`center`（中央）・`right`（右寄せ）。`--max-tape-length-mm` 指定時のみ有効。 |
 | `--font <PATH>` | `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` | フォントファイルのパス（`.ttf`/`.otf`/`.ttc`）。 |
