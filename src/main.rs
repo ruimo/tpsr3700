@@ -135,16 +135,11 @@ struct Args {
     margin_mm: f32,
 
     /// Non-printing margin at the top edge of the tape, in dots.
-    /// The hardware default is 12 dots (empirically confirmed); reduce this
-    /// to maximise the printable area, or increase it to keep ink away from
-    /// the tape edge.
-    #[arg(long, default_value_t = TapeWidth::HEAD_MARGIN_BITS)]
+    #[arg(long, default_value_t = 0)]
     top_margin: usize,
 
     /// Non-printing margin at the bottom edge of the tape, in dots.
-    /// Defaults to the same value as --top-margin (12 dots).
-    /// Independently adjustable to shift the ink position on the tape.
-    #[arg(long, default_value_t = TapeWidth::HEAD_MARGIN_BITS)]
+    #[arg(long, default_value_t = 8)]
     bottom_margin: usize,
 
     /// Total label length in millimeters, including left and right feed
