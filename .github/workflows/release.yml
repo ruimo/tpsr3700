@@ -28,7 +28,7 @@ jobs:
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Use a token that has permission to push commits and tags
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -102,7 +102,7 @@ jobs:
             libusb_install: brew install libusb
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Check out the tag that was just created (or the pushed tag)
           ref: ${{ needs.bump.outputs.tag || github.ref }}
@@ -141,7 +141,7 @@ jobs:
     if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.bump.outputs.tag || github.ref }}
 
