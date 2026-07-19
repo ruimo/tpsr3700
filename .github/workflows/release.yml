@@ -1,6 +1,16 @@
 name: Release
 
 on:
+  # Manual trigger from the Actions UI
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options: [patch, minor, major]
+
+  # Also fires when a v* tag is pushed directly (e.g. via the manual workflow above)
   push:
     tags:
       - 'v[0-9]*'
@@ -9,8 +19,68 @@ permissions:
   contents: write
 
 jobs:
+  # ── Step 1: bump version, commit, and push a new tag ────────────────────────
+  # Runs only for the manual workflow_dispatch trigger.
+  bump:
+    name: Bump version (${{ inputs.bump }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use a token that has permission to push commits and tags
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version in Cargo.toml and create tag
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Read current version
+          current=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Current version: $current"
+
+          # Split into components
+          major=$(echo "$current" | cut -d. -f1)
+          minor=$(echo "$current" | cut -d. -f2)
+          patch=$(echo "$current" | cut -d. -f3)
+
+          # Bump the selected component
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+
+          new="${major}.${minor}.${patch}"
+          tag="v${new}"
+          echo "New version: $new  tag: $tag"
+
+          # Update Cargo.toml
+          sed -i "s/^version = \"${current}\"/version = \"${new}\"/" Cargo.toml
+
+          # Update Cargo.lock (keeps it in sync without a full build)
+          cargo update --workspace --precise "$new" 2>/dev/null || true
+
+          # Commit and tag
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: bump version to ${new}"
+          git tag "$tag"
+          git push origin HEAD:${{ github.ref_name }} "$tag"
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # ── Step 2: build release binaries ──────────────────────────────────────────
   build:
     name: Build (${{ matrix.target }})
+    # Wait for bump when triggered manually; start immediately on tag push
+    needs: [bump]
+    if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,6 +103,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Check out the tag that was just created (or the pushed tag)
+          ref: ${{ needs.bump.outputs.tag || github.ref }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -43,7 +116,7 @@ jobs:
         run: ${{ matrix.libusb_install }}
 
       - name: Run tests
-        # aarch64-apple-darwin cannot run natively on x86_64 runner; skip execution
+        # aarch64-apple-darwin cannot run natively on an x86_64 runner
         if: matrix.target != 'aarch64-apple-darwin'
         run: cargo test --target ${{ matrix.target }}
 
@@ -52,8 +125,7 @@ jobs:
 
       - name: Prepare artifact
         shell: bash
-        run: |
-          cp target/${{ matrix.target }}/release/tpsr3700 ${{ matrix.artifact }}
+        run: cp target/${{ matrix.target }}/release/tpsr3700 ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -62,12 +134,16 @@ jobs:
           path: ${{ matrix.artifact }}
           if-no-files-found: error
 
+  # ── Step 3: create GitHub Release and attach binaries ───────────────────────
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [bump, build]
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.tag || github.ref }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -77,5 +153,6 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.bump.outputs.tag || github.ref_name }}
           files: artifacts/**/*
           generate_release_notes: true
