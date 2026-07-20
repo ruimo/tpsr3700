@@ -19,6 +19,7 @@ Print text labels directly from the command line — no Windows, no vendor softw
 - Wrap-to-length: wrap text to a fixed label length, with a configurable maximum line count derived from the tape width (minimum line height: 3 mm)
 - Left / center / right alignment per line (with `--max-tape-length-mm`)
 - Dump the raw job bytes to a file (useful for debugging without hardware)
+- GUI print preview before sending the job to the printer (shown by default; `--skip-preview` to bypass it)
 
 ## Requirements
 
@@ -35,6 +36,14 @@ any `.ttf`/`.otf`/`.ttc` file.
 
 ```sh
 cargo build --release
+```
+
+The `preview` feature (GUI print preview window, see below) is enabled by
+default. To build without it (e.g. to avoid pulling in GUI dependencies on
+a headless machine), use:
+
+```sh
+cargo build --release --no-default-features
 ```
 
 ## Usage
@@ -83,6 +92,25 @@ tpsr3700 --tape-mm 18 --max-tape-length-mm 40 "Line1\nLine2"
 tpsr3700 --tape-mm 12 --no-print --skip-preview --dump job.prn "Test"
 ```
 
+### Print preview
+
+By default, before sending a job to the printer, a window opens showing
+exactly what will be printed — the feed direction runs left-to-right (as
+the label exits the printer), and the non-printing top/bottom/left/right
+margins are shaded gray so the printable area is easy to spot.
+
+- **Print (Enter)** — closes the window and sends the job to the printer.
+- **Cancel (Esc)** — closes the window and aborts without printing.
+- **View menu** — zoom the whole window's UI in/out; the chosen zoom level
+  is remembered (in `~/.config/tpsr3700/preview.conf` on Linux, or the
+  equivalent per-OS config directory) and restored the next time the
+  preview is shown. The window size itself is not remembered — it always
+  opens at a fixed size, centered on the screen.
+- Pass `--skip-preview` to print immediately without showing the window.
+- The preview requires the crate to be built with the `preview` Cargo
+  feature, which is **enabled by default**. If built without it (`cargo
+  build --no-default-features`), you must always pass `--skip-preview`.
+
 ### Multi-line rules
 
 - The minimum height of one printed line is **3 mm**.
@@ -130,6 +158,7 @@ After that, unplug and re-plug the printer and start a new login session (or run
 src/
   main.rs           CLI entry point (clap argument parsing)
   font/mod.rs       Font rendering: text → raster rows (fontdue)
+  preview.rs        GUI print preview window (egui/eframe, `preview` feature)
   tepra/
     mod.rs          TapeWidth enum and tape geometry constants
     builder.rs      Assembles the full print job byte stream
@@ -180,6 +209,7 @@ Windows も純正ソフトも不要で、コマンドラインから直接テキ
 - ラベル長指定による折り返し（テープ幅から最大行数を自動計算、最低行高さ 3 mm）
 - 行ごとの左寄せ / 中央揃え / 右寄せ（`--max-tape-length-mm` 使用時）
 - 生のジョブバイト列をファイルにダンプ（ハードウェアなしでのデバッグに便利）
+- 印刷前の GUI プレビュー表示（デフォルトで表示。`--skip-preview` で無効化可能）
 
 ## 必要なもの
 
@@ -195,6 +225,12 @@ Windows も純正ソフトも不要で、コマンドラインから直接テキ
 
 ```sh
 cargo build --release
+```
+
+`preview` フィーチャー（GUI 印刷プレビューウィンドウ、後述）はデフォルトで有効です。無効にしてビルドする場合（例: ヘッドレス環境で GUI 依存を避けたい場合）は以下を使用してください:
+
+```sh
+cargo build --release --no-default-features
 ```
 
 ## 使い方
@@ -243,6 +279,16 @@ tpsr3700 --tape-mm 18 --max-tape-length-mm 40 "1行目\n2行目"
 tpsr3700 --tape-mm 12 --no-print --skip-preview --dump job.prn "Test"
 ```
 
+### 印刷プレビュー
+
+デフォルトでは、プリンターにジョブを送信する前にプレビューウィンドウが開き、実際に印刷される内容がそのまま表示されます。送り方向は左から右（ラベルがプリンターから出てくる方向）で、上下左右の非印字マージン部分はグレーで表示されるため、印字可能な範囲が一目でわかります。
+
+- **Print (Enter)** — ウィンドウを閉じてプリンターにジョブを送信します。
+- **Cancel (Esc)** — ウィンドウを閉じて印刷を中止します。
+- **View メニュー** — ウィンドウ全体の UI をズームできます。選択したズーム倍率は記憶され（Linux では `~/.config/tpsr3700/preview.conf`、他 OS では対応する設定ディレクトリ）、次回プレビュー表示時に復元されます。ウィンドウサイズ自体は記憶されず、常に固定サイズで画面中央に開きます。
+- `--skip-preview` を指定すると、プレビューを表示せずに即座に印刷します。
+- プレビュー機能を使うには `preview` Cargo フィーチャー（**デフォルトで有効**）が必要です。無効にしてビルドした場合（`cargo build --no-default-features`）は、常に `--skip-preview` を指定する必要があります。
+
 ### 複数行印刷のルール
 
 - 1 行の最低高さは **3 mm** です。
@@ -290,6 +336,7 @@ sudo udevadm control --reload && sudo udevadm trigger
 src/
   main.rs           CLI エントリーポイント（clap 引数解析）
   font/mod.rs       フォントレンダリング: テキスト → ラスタ行（fontdue 使用）
+  preview.rs        GUI 印刷プレビューウィンドウ（egui/eframe、`preview` フィーチャー）
   tepra/
     mod.rs          TapeWidth 列挙型とテープのジオメトリ定数
     builder.rs      印刷ジョブのバイト列を組み立て
