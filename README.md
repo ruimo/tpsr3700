@@ -140,7 +140,9 @@ assets/
   header_18mm_template.bin   Base template for the job header
 captures/           Raw USB capture of the tape-width probe (.pcap)
 docs/protocol.md    Protocol documentation
-src/font/           BIZ UDPゴシック Regular bundled in the binary (OFL-1.1)
+src/font/
+  BIZUDPGothic-Regular.ttf   BIZ UDPゴシック Regular, bundled in the binary
+  OFL.txt                    Font license (SIL Open Font License 1.1)
 tests/fixtures/     Golden .prn files used in byte-exact reconstruction tests
 ```
 
@@ -297,7 +299,9 @@ assets/
   header_18mm_template.bin   ジョブヘッダーのベーステンプレート
 captures/           テープ幅検出時の USB キャプチャ（.pcap）
 docs/protocol.md    プロトコル仕様書
-src/font/           バイナリに埋め込まれる BIZ UDPゴシック Regular（OFL-1.1）
+src/font/
+  BIZUDPGothic-Regular.ttf   バイナリに埋め込まれる BIZ UDPゴシック Regular
+  OFL.txt                    フォントのライセンス（SIL Open Font License 1.1）
 tests/fixtures/     バイト完全一致テスト用ゴールデン .prn ファイル
 ```
 
