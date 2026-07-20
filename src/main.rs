@@ -177,6 +177,13 @@ struct Args {
     /// with --dump).
     #[arg(long)]
     no_print: bool,
+
+    /// Skip the print preview window and send the job straight to the
+    /// printer (or to --dump) without asking for confirmation. By
+    /// default a preview window is shown before printing; see the
+    /// `preview` feature (enabled by default).
+    #[arg(long)]
+    skip_preview: bool,
 }
 
 fn main() -> Result<()> {
@@ -294,6 +301,35 @@ fn main() -> Result<()> {
         std::fs::write(path, &job)?;
         eprintln!("wrote {} bytes to {}", job.len(), path.display());
         dump_explain(&job, tape, args.top_margin, args.bottom_margin);
+    }
+
+    if !args.skip_preview {
+        #[cfg(feature = "preview")]
+        {
+            let right_margin_rows = tpsr3700::font::mm_to_rows(args.right_margin_mm);
+            match tpsr3700::preview::show_preview(
+                &rows,
+                tape,
+                &text,
+                args.top_margin,
+                args.bottom_margin,
+                margin,
+                right_margin_rows,
+            )? {
+                tpsr3700::preview::PreviewResult::Print => {}
+                tpsr3700::preview::PreviewResult::Cancel => {
+                    eprintln!("cancelled by user in preview window; not printing.");
+                    return Ok(());
+                }
+            }
+        }
+        #[cfg(not(feature = "preview"))]
+        {
+            anyhow::bail!(
+                "the print preview window requires the crate to be built with the \
+                 `preview` feature; pass --skip-preview to print without previewing"
+            );
+        }
     }
 
     if !args.no_print {

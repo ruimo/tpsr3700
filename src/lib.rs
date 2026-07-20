@@ -6,5 +6,7 @@
 //! from Linux without the vendor driver.
 
 pub mod font;
+#[cfg(feature = "preview")]
+pub mod preview;
 pub mod tepra;
 pub mod usb;

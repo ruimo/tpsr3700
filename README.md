@@ -58,6 +58,7 @@ tpsr3700 [OPTIONS] <TEXT>
 | `--font <PATH>` | bundled BIZ UDPゴシック | Path to a `.ttf`/`.otf`/`.ttc` font file. Overrides the bundled font. |
 | `--dump <PATH>` | — | Write the raw job bytes to a file (in addition to, or instead of, printing). |
 | `--no-print` | — | Skip sending the job to the printer. Useful with `--dump`. |
+| `--skip-preview` | — | Skip the print preview window and print immediately. A preview window is shown by default (requires the `preview` build feature, enabled by default). |
 
 ### Examples
 
@@ -79,7 +80,7 @@ tpsr3700 --tape-mm 18 --max-tape-length-mm 50 --align center "Hello World"
 tpsr3700 --tape-mm 18 --max-tape-length-mm 40 "Line1\nLine2"
 
 # Dump job bytes without printing (useful for debugging)
-tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
+tpsr3700 --tape-mm 12 --no-print --skip-preview --dump job.prn "Test"
 ```
 
 ### Multi-line rules
@@ -217,6 +218,7 @@ tpsr3700 [オプション] <テキスト>
 | `--font <PATH>` | バンドル済み BIZ UDPゴシック | フォントファイルのパス（`.ttf`/`.otf`/`.ttc`）。バンドルフォントを上書きします。 |
 | `--dump <PATH>` | — | 生のジョブバイト列をファイルに書き出す（印刷と併用可）。 |
 | `--no-print` | — | プリンターへの送信をスキップ。`--dump` と組み合わせて使用。 |
+| `--skip-preview` | — | 印刷プレビュー画面を表示せず、すぐに印刷する。デフォルトではプレビューを表示する（`preview` ビルドフィーチャーが必要。デフォルトで有効）。 |
 
 ### 使用例
 
@@ -238,7 +240,7 @@ tpsr3700 --tape-mm 18 --max-tape-length-mm 50 --align center "Hello World"
 tpsr3700 --tape-mm 18 --max-tape-length-mm 40 "1行目\n2行目"
 
 # 印刷せずにジョブバイト列をファイルにダンプ（デバッグ用）
-tpsr3700 --tape-mm 12 --no-print --dump job.prn "Test"
+tpsr3700 --tape-mm 12 --no-print --skip-preview --dump job.prn "Test"
 ```
 
 ### 複数行印刷のルール
