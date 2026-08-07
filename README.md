@@ -19,7 +19,7 @@ Print text labels directly from the command line — no Windows, no vendor softw
 - Wrap-to-length: wrap text to a fixed label length, with a configurable maximum line count derived from the tape width (minimum line height: 3 mm)
 - Left / center / right alignment per line (with `--max-tape-length-mm`)
 - Dump the raw job bytes to a file (useful for debugging without hardware)
-- GUI print preview before sending the job to the printer (shown by default; `--skip-preview` to bypass it)
+- SVG print preview before sending the job to the printer (shown by default; `--skip-preview` to bypass it)
 
 ## Requirements
 
@@ -38,9 +38,8 @@ any `.ttf`/`.otf`/`.ttc` file.
 cargo build --release
 ```
 
-The `preview` feature (GUI print preview window, see below) is enabled by
-default. To build without it (e.g. to avoid pulling in GUI dependencies on
-a headless machine), use:
+The `preview` feature (SVG print preview, see below) is enabled by
+default. To build without it, use:
 
 ```sh
 cargo build --release --no-default-features
@@ -56,7 +55,7 @@ tpsr3700 [OPTIONS] <TEXT>
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--tape-mm <MM>` | auto-detect | Tape width in mm. Supported: `6`, `12`, `18`. Omit to query the printer. |
+| `--tape-mm <MM>` | auto-detect | Tape width in mm. Supported: `6`, `12`, `18`, and experimental `24`. Omit to query the printer. |
 | `--size <PT>` | auto | Font size in points (as shown in the TEPRA app, e.g. `36`). Omit for the largest size that fits. |
 | `--left-margin-mm <MM>` | `10.0` | Blank feed margin (mm) added before the printed content (left side as the label exits the printer). |
 | `--right-margin-mm <MM>` | `3.0` | Blank feed margin (mm) added after the printed content (right side). |
@@ -67,7 +66,7 @@ tpsr3700 [OPTIONS] <TEXT>
 | `--font <PATH>` | bundled BIZ UDPゴシック | Path to a `.ttf`/`.otf`/`.ttc` font file. Overrides the bundled font. |
 | `--dump <PATH>` | — | Write the raw job bytes to a file (in addition to, or instead of, printing). |
 | `--no-print` | — | Skip sending the job to the printer. Useful with `--dump`. |
-| `--skip-preview` | — | Skip the print preview window and print immediately. A preview window is shown by default (requires the `preview` build feature, enabled by default). |
+| `--skip-preview` | — | Skip the SVG print preview and print immediately. A preview is shown by default (requires the `preview` build feature, enabled by default). |
 
 ### Examples
 
@@ -94,19 +93,16 @@ tpsr3700 --tape-mm 12 --no-print --skip-preview --dump job.prn "Test"
 
 ### Print preview
 
-By default, before sending a job to the printer, a window opens showing
-exactly what will be printed — the feed direction runs left-to-right (as
-the label exits the printer), and the non-printing top/bottom/left/right
-margins are shaded gray so the printable area is easy to spot.
+By default, before sending a job to the printer, an SVG preview file is
+written to the system temp directory and opened with the OS default viewer
+when possible. It shows exactly what will be printed — the feed direction
+runs left-to-right (as the label exits the printer), and the non-printing
+top/bottom/left/right margins are shaded gray so the printable area is easy
+to spot.
 
-- **Print (Enter)** — closes the window and sends the job to the printer.
-- **Cancel (Esc)** — closes the window and aborts without printing.
-- **View menu** — zoom the whole window's UI in/out; the chosen zoom level
-  is remembered (in `~/.config/tpsr3700/preview.conf` on Linux, or the
-  equivalent per-OS config directory) and restored the next time the
-  preview is shown. The window size itself is not remembered — it always
-  opens at a fixed size, centered on the screen.
-- Pass `--skip-preview` to print immediately without showing the window.
+- Confirm in the terminal with `y` / `yes` to send the job to the printer.
+- Press Enter or type anything else to abort without printing.
+- Pass `--skip-preview` to print immediately without showing the preview.
 - The preview requires the crate to be built with the `preview` Cargo
   feature, which is **enabled by default**. If built without it (`cargo
   build --no-default-features`), you must always pass `--skip-preview`.
@@ -158,7 +154,7 @@ After that, unplug and re-plug the printer and start a new login session (or run
 src/
   main.rs           CLI entry point (clap argument parsing)
   font/mod.rs       Font rendering: text → raster rows (fontdue)
-  preview.rs        GUI print preview window (egui/eframe, `preview` feature)
+  preview.rs        SVG print preview (`preview` feature)
   tepra/
     mod.rs          TapeWidth enum and tape geometry constants
     builder.rs      Assembles the full print job byte stream
@@ -209,7 +205,7 @@ Windows も純正ソフトも不要で、コマンドラインから直接テキ
 - ラベル長指定による折り返し（テープ幅から最大行数を自動計算、最低行高さ 3 mm）
 - 行ごとの左寄せ / 中央揃え / 右寄せ（`--max-tape-length-mm` 使用時）
 - 生のジョブバイト列をファイルにダンプ（ハードウェアなしでのデバッグに便利）
-- 印刷前の GUI プレビュー表示（デフォルトで表示。`--skip-preview` で無効化可能）
+- 印刷前の SVG プレビュー表示（デフォルトで表示。`--skip-preview` で無効化可能）
 
 ## 必要なもの
 
@@ -227,7 +223,7 @@ Windows も純正ソフトも不要で、コマンドラインから直接テキ
 cargo build --release
 ```
 
-`preview` フィーチャー（GUI 印刷プレビューウィンドウ、後述）はデフォルトで有効です。無効にしてビルドする場合（例: ヘッドレス環境で GUI 依存を避けたい場合）は以下を使用してください:
+`preview` フィーチャー（SVG 印刷プレビュー、後述）はデフォルトで有効です。無効にしてビルドする場合は以下を使用してください:
 
 ```sh
 cargo build --release --no-default-features
@@ -243,7 +239,7 @@ tpsr3700 [オプション] <テキスト>
 
 | オプション | デフォルト | 説明 |
 |-----------|-----------|------|
-| `--tape-mm <MM>` | 自動検出 | テープ幅（mm）。`6`・`12`・`18` をサポート。省略時はプリンターに問い合わせ。 |
+| `--tape-mm <MM>` | 自動検出 | テープ幅（mm）。`6`・`12`・`18`、実験的に `24` をサポート。省略時はプリンターに問い合わせ。 |
 | `--size <PT>` | 自動 | フォントサイズ（ポイント、TEPRA アプリの表示と同じ。例: `36`）。省略時はテープに収まる最大サイズ。 |
 | `--left-margin-mm <MM>` | `10.0` | 印字内容の前（ラベルがプリンターから出る側＝左端）に追加する余白（mm）。 |
 | `--right-margin-mm <MM>` | `3.0` | 印字内容の後（右端）に追加する余白（mm）。 |
@@ -254,7 +250,7 @@ tpsr3700 [オプション] <テキスト>
 | `--font <PATH>` | バンドル済み BIZ UDPゴシック | フォントファイルのパス（`.ttf`/`.otf`/`.ttc`）。バンドルフォントを上書きします。 |
 | `--dump <PATH>` | — | 生のジョブバイト列をファイルに書き出す（印刷と併用可）。 |
 | `--no-print` | — | プリンターへの送信をスキップ。`--dump` と組み合わせて使用。 |
-| `--skip-preview` | — | 印刷プレビュー画面を表示せず、すぐに印刷する。デフォルトではプレビューを表示する（`preview` ビルドフィーチャーが必要。デフォルトで有効）。 |
+| `--skip-preview` | — | SVG 印刷プレビューを表示せず、すぐに印刷する。デフォルトではプレビューを表示する（`preview` ビルドフィーチャーが必要。デフォルトで有効）。 |
 
 ### 使用例
 
@@ -281,11 +277,10 @@ tpsr3700 --tape-mm 12 --no-print --skip-preview --dump job.prn "Test"
 
 ### 印刷プレビュー
 
-デフォルトでは、プリンターにジョブを送信する前にプレビューウィンドウが開き、実際に印刷される内容がそのまま表示されます。送り方向は左から右（ラベルがプリンターから出てくる方向）で、上下左右の非印字マージン部分はグレーで表示されるため、印字可能な範囲が一目でわかります。
+デフォルトでは、プリンターにジョブを送信する前に SVG プレビューファイルをシステムの一時ディレクトリへ書き出し、可能であれば OS の既定ビューアで開きます。実際に印刷される内容がそのまま表示されます。送り方向は左から右（ラベルがプリンターから出てくる方向）で、上下左右の非印字マージン部分はグレーで表示されるため、印字可能な範囲が一目でわかります。
 
-- **Print (Enter)** — ウィンドウを閉じてプリンターにジョブを送信します。
-- **Cancel (Esc)** — ウィンドウを閉じて印刷を中止します。
-- **View メニュー** — ウィンドウ全体の UI をズームできます。選択したズーム倍率は記憶され（Linux では `~/.config/tpsr3700/preview.conf`、他 OS では対応する設定ディレクトリ）、次回プレビュー表示時に復元されます。ウィンドウサイズ自体は記憶されず、常に固定サイズで画面中央に開きます。
+- 端末で `y` / `yes` を入力すると、プリンターにジョブを送信します。
+- Enter のみ、またはそれ以外の入力では印刷を中止します。
 - `--skip-preview` を指定すると、プレビューを表示せずに即座に印刷します。
 - プレビュー機能を使うには `preview` Cargo フィーチャー（**デフォルトで有効**）が必要です。無効にしてビルドした場合（`cargo build --no-default-features`）は、常に `--skip-preview` を指定する必要があります。
 
@@ -336,7 +331,7 @@ sudo udevadm control --reload && sudo udevadm trigger
 src/
   main.rs           CLI エントリーポイント（clap 引数解析）
   font/mod.rs       フォントレンダリング: テキスト → ラスタ行（fontdue 使用）
-  preview.rs        GUI 印刷プレビューウィンドウ（egui/eframe、`preview` フィーチャー）
+  preview.rs        SVG 印刷プレビュー（`preview` フィーチャー）
   tepra/
     mod.rs          TapeWidth 列挙型とテープのジオメトリ定数
     builder.rs      印刷ジョブのバイト列を組み立て

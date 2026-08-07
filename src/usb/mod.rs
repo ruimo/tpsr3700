@@ -207,16 +207,16 @@ impl Printer {
     /// Sends a raw TEPRA print job byte stream directly to the printer's
     /// bulk OUT endpoint, with no additional framing.
     pub fn send_job(&mut self, job: &[u8]) -> Result<()> {
-        // The printer's bulk endpoints use 64-byte max packet size; large
-        // writes are automatically split into multiple USB transactions by
-        // the OS/libusb, so a single write_bulk call for the whole job is
-        // fine.
-        let n = self
-            .handle
-            .write_bulk(self.endpoint_out, job, Duration::from_secs(30))
-            .context("failed to send print job")?;
-        if n != job.len() {
-            bail!("short write: sent {} of {} bytes", n, job.len());
+        let mut sent = 0;
+        while sent < job.len() {
+            let n = self
+                .handle
+                .write_bulk(self.endpoint_out, &job[sent..], Duration::from_secs(30))
+                .with_context(|| format!("failed to send print job after {sent} bytes"))?;
+            if n == 0 {
+                bail!("USB bulk write made no progress after {sent} of {} bytes", job.len());
+            }
+            sent += n;
         }
         Ok(())
     }

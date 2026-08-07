@@ -144,12 +144,10 @@ site). This strongly suggests the full mapping is:
 | 6     | 36mm       |
 | 7     | 50mm       |
 
-Indices 0, 2, 5, 6, and 7 (4mm, 9mm, 24mm, 36mm, 50mm) are
-extrapolated from the lineup pattern and have **not** been confirmed
-against real hardware or a capture — only 6mm, 12mm, and 18mm are
-verified (which also happen to be the only three widths this crate's
-`TapeWidth` currently implements end-to-end, i.e. with known
-`width_byte`/`aux_byte`/raster parameters from section 3).
+Indices 0, 2, 6, and 7 (4mm, 9mm, 36mm, 50mm) are extrapolated from
+the lineup pattern and have **not** been confirmed against real hardware
+or a capture. Index 5 is treated as experimental 24mm support, while
+only 6mm, 12mm, and 18mm are fully verified end-to-end.
 
 The meaning of the other 7 bytes in the response (always `08 00 00
 <idx> 00 00 00 00` in every observed sample) is unknown; byte 0 (`08`)
@@ -211,12 +209,12 @@ leading `ESC {` and the `0x80` length byte):
 | Offset | Field                        | Notes |
 |-------:|-------------------------------|-------|
 | 0–2    | `1B 7B 80`                     | Frame start + fixed length marker |
-| 8      | Tape width in mm               | `0x06`=6mm, `0x0C`=12mm, `0x12`=18mm |
+| 8      | Tape width in mm               | `0x06`=6mm, `0x0C`=12mm, `0x12`=18mm, `0x18`=experimental 24mm |
 | 0x21   | `"SPC10"` (UTF-16LE)            | Unknown purpose; possibly a format/protocol version tag |
 | 0x61   | `"306"` (UTF-16LE)              | Unknown purpose |
 | 0x81   | `"obj_barcode\t\nprint_form\tGeneral\ncatalog_desc\t"` (ASCII) | Unknown purpose; looks like leftover template/object metadata from the desktop app's internal document model |
 | 20     | Grows by 4 per extra character  | `value = 12 + 4 * char_count`. Confirmed for char_count 1 and 2; likely related to some per-character/per-object table size, but the underlying table itself has not been located. |
-| 23     | Tape-width-dependent byte, unknown meaning | 6mm→3, 12mm→5, 18mm→6. No formula found relating it to tape width or bitmap size (see also 3.1) — kept as a hardcoded lookup table. |
+| 23     | Tape-width-dependent byte, unknown meaning | 6mm→3, 12mm→5, 18mm→6, experimental 24mm→7. No formula found relating it to tape width or bitmap size (see also 3.1) — kept as a hardcoded lookup table. |
 | 2177   | Checksum                       | `sum(bytes[3..2177]) mod 256` |
 | 2178   | `0x7D`                          | Frame end |
 
@@ -302,7 +300,8 @@ Implemented as `TRAILING_BYTE` + `build_command_frame(b'@', &[])` in
 ## 3. Tape width parameters
 
 Three tape widths have been captured and verified byte-for-byte: 6mm,
-12mm, and 18mm.
+12mm, and 18mm. 24mm support is experimental and extrapolated from the
+known raster formula plus a provisional header aux byte.
 
 ### 3.1 Raster row width byte and bitmap size
 
@@ -311,6 +310,7 @@ Three tape widths have been captured and verified byte-for-byte: 6mm,
 | 6mm        | `0x06`                  | `0x38` (56)        | 8 bytes (64 bits) |
 | 12mm       | `0x0C`                  | `0x70` (112)       | 15 bytes (120 bits) |
 | 18mm       | `0x12`                  | `0xA8` (168)       | 22 bytes (176 bits) |
+| 24mm       | `0x18`                  | `0xE0` (224)       | 29 bytes (232 bits), experimental |
 
 These three data points fit two exact formulas:
 
@@ -327,10 +327,10 @@ discovered after capturing the 12mm sample — with only 6mm and 18mm
 data points, a naive linear fit through the origin looked plausible
 but was wrong.
 
-This formula is unverified for tape widths other than 6/12/18mm;
-support for other widths (3.5mm, 9mm, 24mm, etc., which the printer
-line is known to support) would need additional captures to confirm
-or refute it.
+This formula is verified only for 6/12/18mm. 24mm currently uses the
+same formula experimentally; support for other widths (3.5mm, 9mm,
+36mm, etc., which the printer line is known to support) would need
+additional captures to confirm or refute it.
 
 ### 3.2 Header offset 23 ("aux byte")
 
@@ -339,11 +339,13 @@ or refute it.
 | 6mm        | 3     |
 | 12mm       | 5     |
 | 18mm       | 6     |
+| 24mm       | 7 (experimental) |
 
 No formula relating this value to `width_mm`, `width_byte`, or the
 bitmap size has been found. It is stored as a hardcoded lookup table
 (`TapeWidth::aux_byte` in `src/tepra/mod.rs`) pending further data
-points.
+points. The 24mm value is provisional until confirmed by a captured 24mm
+job.
 
 ## 4. Font size / point-to-pixel conversion
 

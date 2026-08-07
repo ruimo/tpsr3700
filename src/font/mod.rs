@@ -771,14 +771,16 @@ mod tests {
         let max_6mm = renderer.max_size_pt_for_tape(TapeWidth::Mm6, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
         let max_12mm = renderer.max_size_pt_for_tape(TapeWidth::Mm12, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
         let max_18mm = renderer.max_size_pt_for_tape(TapeWidth::Mm18, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
+        let max_24mm = renderer.max_size_pt_for_tape(TapeWidth::Mm24, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
         assert!(max_6mm < max_12mm);
         assert!(max_12mm < max_18mm);
+        assert!(max_18mm < max_24mm);
     }
 
     #[test]
     fn max_size_does_not_clip() {
         let renderer = default_renderer();
-        for tape in [TapeWidth::Mm6, TapeWidth::Mm12, TapeWidth::Mm18] {
+        for tape in [TapeWidth::Mm6, TapeWidth::Mm12, TapeWidth::Mm18, TapeWidth::Mm24] {
             let max = renderer.max_size_pt_for_tape(tape, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS);
             assert!(!renderer.would_clip(max, tape, TapeWidth::HEAD_MARGIN_BITS, TapeWidth::HEAD_MARGIN_BITS));
             // A couple of points larger should clip.

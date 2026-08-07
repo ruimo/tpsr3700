@@ -12,15 +12,15 @@ pub mod raster;
 /// Supported tape widths.
 ///
 /// 6mm, 12mm and 18mm have been reverse engineered so far (from captured
-/// print jobs). Other widths supported by the printer are not yet mapped
-/// (in particular, [`TapeWidth::aux_byte`] does not follow an obvious
-/// formula from the three known data points, so it is a hardcoded lookup
-/// rather than a computed value).
+/// print jobs). 24mm support is experimental: its raster dimensions are
+/// extrapolated from the known formula, and [`TapeWidth::aux_byte`] is a
+/// provisional value pending a captured 24mm print job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TapeWidth {
     Mm6,
     Mm12,
     Mm18,
+    Mm24,
 }
 
 impl TapeWidth {
@@ -30,25 +30,29 @@ impl TapeWidth {
             TapeWidth::Mm6 => 6,
             TapeWidth::Mm12 => 12,
             TapeWidth::Mm18 => 18,
+            TapeWidth::Mm24 => 24,
         }
     }
 
     /// Secondary tape-width-dependent byte in the job header (offset 23).
     /// Exact meaning unknown; values observed empirically (6mm -> 3,
     /// 12mm -> 5, 18mm -> 6; no simple formula found relating this to
-    /// `width_mm` or the bitmap size, hence the hardcoded lookup).
+    /// `width_mm` or the bitmap size, hence the hardcoded lookup). 24mm is
+    /// a provisional value for experimental support.
     pub fn aux_byte(self) -> u8 {
         match self {
             TapeWidth::Mm6 => 3,
             TapeWidth::Mm12 => 5,
             TapeWidth::Mm18 => 6,
+            TapeWidth::Mm24 => 7,
         }
     }
 
     /// Tape-width byte used in each raster row header.
     ///
     /// Empirically `width_byte = width_mm * 28 / 3` exactly for all three
-    /// known tape widths (6mm -> 56, 12mm -> 112, 18mm -> 168).
+    /// known tape widths (6mm -> 56, 12mm -> 112, 18mm -> 168). 24mm uses
+    /// the same extrapolated formula.
     pub fn width_byte(self) -> u8 {
         (self.width_mm() as u32 * 28 / 3) as u8
     }
@@ -95,17 +99,18 @@ impl TapeWidth {
     /// `docs/protocol.md` section 1.5), into a [`TapeWidth`].
     ///
     /// Only indices 1 (6mm), 3 (12mm), and 4 (18mm) have been confirmed
-    /// against real hardware. Indices 0, 2, 5, 6, and 7 are extrapolated
+    /// against real hardware. Index 5 is assumed to be 24mm from KING JIM's
+    /// official tape width lineup. Indices 0, 2, 6, and 7 are extrapolated
     /// from KING JIM's official tape width lineup for this printer line
     /// (4/6/9/12/18/24/36/50mm) but are not currently representable as a
-    /// [`TapeWidth`] (only 6/12/18mm are implemented elsewhere in this
-    /// crate), so they return `None` here too, pending support for those
-    /// widths.
+    /// [`TapeWidth`], so they return `None` here too, pending support for
+    /// those widths.
     pub fn from_detected_index(index: u8) -> Option<Self> {
         match index {
             1 => Some(TapeWidth::Mm6),
             3 => Some(TapeWidth::Mm12),
             4 => Some(TapeWidth::Mm18),
+            5 => Some(TapeWidth::Mm24),
             _ => None,
         }
     }
@@ -120,6 +125,7 @@ mod tests {
         assert_eq!(TapeWidth::Mm6.width_byte(), 0x38);
         assert_eq!(TapeWidth::Mm12.width_byte(), 0x70);
         assert_eq!(TapeWidth::Mm18.width_byte(), 0xA8);
+        assert_eq!(TapeWidth::Mm24.width_byte(), 0xE0);
     }
 
     #[test]
@@ -127,6 +133,7 @@ mod tests {
         assert_eq!(TapeWidth::Mm6.bitmap_bytes(), 8);
         assert_eq!(TapeWidth::Mm12.bitmap_bytes(), 15);
         assert_eq!(TapeWidth::Mm18.bitmap_bytes(), 22);
+        assert_eq!(TapeWidth::Mm24.bitmap_bytes(), 29);
     }
 
     #[test]
@@ -139,10 +146,15 @@ mod tests {
     }
 
     #[test]
+    fn from_detected_index_supports_experimental_24mm() {
+        assert_eq!(TapeWidth::from_detected_index(5), Some(TapeWidth::Mm24));
+    }
+
+    #[test]
     fn from_detected_index_rejects_unsupported_widths() {
-        // Indices 0 (4mm), 2 (9mm), 5 (24mm), 6 (36mm), 7 (50mm) are not
-        // yet implemented.
-        for index in [0, 2, 5, 6, 7] {
+        // Indices 0 (4mm), 2 (9mm), 6 (36mm), 7 (50mm) are not yet
+        // implemented.
+        for index in [0, 2, 6, 7] {
             assert_eq!(TapeWidth::from_detected_index(index), None);
         }
     }

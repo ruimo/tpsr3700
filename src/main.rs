@@ -83,27 +83,6 @@ fn dump_explain(job: &[u8], tape: TapeWidth, top_margin: usize, bottom_margin: u
         _ => println!("  ink bit range  : (none)"),
     }
 
-    // ASCII art — downsample feed direction to ≤120 columns for readability.
-    println!();
-    println!("[ASCII art]  '#'=ink  '.'=blank  '|'=non-printing margin boundary");
-    let step = (row_count as usize / 120).max(1);
-    for (i, bm) in bitmaps.iter().enumerate() {
-        if i % step != 0 { continue; }
-        let line: String = (0..bitmap_bits).map(|bit| {
-            let byte_i = bit / 8;
-            let bit_j  = bit % 8;
-            let inked  = (bm[byte_i] >> (7 - bit_j)) & 1 == 1;
-            if bit == head_offset || bit == head_offset + head_bits {
-                '|'
-            } else if inked {
-                '#'
-            } else {
-                '.'
-            }
-        }).collect();
-        println!("{}", line);
-    }
-
     // ---- Footer ----
     println!();
     println!("[Footer]  0x0C + ESC{{'{{'@'}}");
@@ -116,7 +95,7 @@ struct Args {
     /// Text to print.
     text: String,
 
-    /// Tape width in millimeters (6, 12, and 18 are currently supported).
+    /// Tape width in millimeters (6, 12, 18, and experimental 24 are supported).
     /// If omitted, the width is auto-detected by querying the printer
     /// (requires the printer to be connected; incompatible with
     /// --no-print).
@@ -178,9 +157,9 @@ struct Args {
     #[arg(long)]
     no_print: bool,
 
-    /// Skip the print preview window and send the job straight to the
+    /// Skip the print preview and send the job straight to the
     /// printer (or to --dump) without asking for confirmation. By
-    /// default a preview window is shown before printing; see the
+    /// default an SVG preview is shown before printing; see the
     /// `preview` feature (enabled by default).
     #[arg(long)]
     skip_preview: bool,
@@ -207,8 +186,9 @@ fn main() -> Result<()> {
         Some(6) => TapeWidth::Mm6,
         Some(12) => TapeWidth::Mm12,
         Some(18) => TapeWidth::Mm18,
+        Some(24) => TapeWidth::Mm24,
         Some(other) => {
-            anyhow::bail!("unsupported tape width: {other}mm (only 6, 12, and 18 are supported)")
+            anyhow::bail!("unsupported tape width: {other}mm (only 6, 12, 18, and experimental 24 are supported)")
         }
         None => {
             let printer = printer
@@ -222,7 +202,7 @@ fn main() -> Result<()> {
                 }
                 None => anyhow::bail!(
                     "detected tape width index {index} from the printer, but this width \
-                     isn't supported yet (only 6, 12, and 18mm are); pass --tape-mm explicitly \
+                     isn't supported yet (only 6, 12, 18, and experimental 24mm are); pass --tape-mm explicitly \
                      if you know the width, or see docs/protocol.md section 1.5 for the index \
                      mapping"
                 ),
@@ -318,7 +298,7 @@ fn main() -> Result<()> {
             )? {
                 tpsr3700::preview::PreviewResult::Print => {}
                 tpsr3700::preview::PreviewResult::Cancel => {
-                    eprintln!("cancelled by user in preview window; not printing.");
+                    eprintln!("cancelled by user in preview; not printing.");
                     return Ok(());
                 }
             }
@@ -326,7 +306,7 @@ fn main() -> Result<()> {
         #[cfg(not(feature = "preview"))]
         {
             anyhow::bail!(
-                "the print preview window requires the crate to be built with the \
+                "the print preview requires the crate to be built with the \
                  `preview` feature; pass --skip-preview to print without previewing"
             );
         }
