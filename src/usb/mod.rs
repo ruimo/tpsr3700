@@ -190,6 +190,12 @@ impl Printer {
     /// `TapeWidth::from_detected_index`'s docs for which indices those
     /// are), along with the raw index value for diagnostics.
     pub fn get_tape_width(&self) -> Result<Option<crate::tepra::TapeWidth>> {
+        // The official TEPRA desktop app queries tape information twice.
+        // On a physical SR3700P, the first query can return the previous
+        // tape width immediately after a cartridge change; the second
+        // query returns the current width.
+        let _ = self.get_tape_info_raw()?;
+        std::thread::sleep(Duration::from_millis(10));
         let raw = self.get_tape_info_raw()?;
         let index = raw[3];
         Ok(crate::tepra::TapeWidth::from_detected_index(index))
@@ -199,6 +205,10 @@ impl Printer {
     /// detected index (useful for diagnostics/error messages when the
     /// index isn't a currently-supported width).
     pub fn get_tape_width_with_index(&self) -> Result<(Option<crate::tepra::TapeWidth>, u8)> {
+        // See get_tape_width(): the first response can contain a stale
+        // tape width immediately after a cartridge change.
+        let _ = self.get_tape_info_raw()?;
+        std::thread::sleep(Duration::from_millis(10));
         let raw = self.get_tape_info_raw()?;
         let index = raw[3];
         Ok((crate::tepra::TapeWidth::from_detected_index(index), index))

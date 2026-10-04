@@ -11,13 +11,14 @@ pub mod raster;
 
 /// Supported tape widths.
 ///
-/// 6mm, 12mm and 18mm have been reverse engineered so far (from captured
-/// print jobs). 24mm support is experimental: its raster dimensions are
-/// extrapolated from the known formula, and [`TapeWidth::aux_byte`] is a
-/// provisional value pending a captured 24mm print job.
+/// Raster dimensions for 4mm, 9mm, and 24mm were confirmed from USB
+/// captures of official KING JIM SPC print jobs. 6mm, 12mm, and 18mm
+/// values come from the existing captured print jobs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TapeWidth {
+    Mm4,
     Mm6,
+    Mm9,
     Mm12,
     Mm18,
     Mm24,
@@ -27,21 +28,27 @@ impl TapeWidth {
     /// Tape width in millimeters, as encoded in the job header (offset 8).
     pub fn width_mm(self) -> u8 {
         match self {
+            TapeWidth::Mm4 => 4,
             TapeWidth::Mm6 => 6,
+            TapeWidth::Mm9 => 9,
             TapeWidth::Mm12 => 12,
             TapeWidth::Mm18 => 18,
             TapeWidth::Mm24 => 24,
         }
     }
 
-    /// Secondary tape-width-dependent byte in the job header (offset 23).
-    /// Exact meaning unknown; values observed empirically (6mm -> 3,
-    /// 12mm -> 5, 18mm -> 6; no simple formula found relating this to
-    /// `width_mm` or the bitmap size, hence the hardcoded lookup). 24mm is
-    /// a provisional value for experimental support.
+    /// Secondary tape-width-dependent byte in the legacy job header
+    /// (offset 23). Exact meaning unknown.
+    ///
+    /// Values 3, 5, and 6 were observed in captured FILE:-port jobs for
+    /// 6mm, 12mm, and 18mm respectively. Values for 4mm and 9mm have not
+    /// been observed; zero is used pending further reverse engineering.
+    /// The 24mm value remains provisional.
     pub fn aux_byte(self) -> u8 {
         match self {
+            TapeWidth::Mm4 => 0,
             TapeWidth::Mm6 => 3,
+            TapeWidth::Mm9 => 0,
             TapeWidth::Mm12 => 5,
             TapeWidth::Mm18 => 6,
             TapeWidth::Mm24 => 7,
@@ -50,11 +57,18 @@ impl TapeWidth {
 
     /// Tape-width byte used in each raster row header.
     ///
-    /// Empirically `width_byte = width_mm * 28 / 3` exactly for all three
-    /// known tape widths (6mm -> 56, 12mm -> 112, 18mm -> 168). 24mm uses
-    /// the same extrapolated formula.
+    /// Values are taken from captured print jobs. They must not be
+    /// extrapolated from the nominal tape width: notably 4mm and 24mm do
+    /// not follow the relation previously inferred from 6/12/18mm.
     pub fn width_byte(self) -> u8 {
-        (self.width_mm() as u32 * 28 / 3) as u8
+        match self {
+            TapeWidth::Mm4 => 0x20,
+            TapeWidth::Mm6 => 0x38,
+            TapeWidth::Mm9 => 0x50,
+            TapeWidth::Mm12 => 0x70,
+            TapeWidth::Mm18 => 0xA8,
+            TapeWidth::Mm24 => 0xC0,
+        }
     }
 
     /// Number of bitmap bytes per raster row (i.e. usable dots / 8).
@@ -98,16 +112,12 @@ impl TapeWidth {
     /// response; see [`crate::usb::Printer::get_tape_info_raw`] and
     /// `docs/protocol.md` section 1.5), into a [`TapeWidth`].
     ///
-    /// Only indices 1 (6mm), 3 (12mm), and 4 (18mm) have been confirmed
-    /// against real hardware. Index 5 is assumed to be 24mm from KING JIM's
-    /// official tape width lineup. Indices 0, 2, 6, and 7 are extrapolated
-    /// from KING JIM's official tape width lineup for this printer line
-    /// (4/6/9/12/18/24/36/50mm) but are not currently representable as a
-    /// [`TapeWidth`], so they return `None` here too, pending support for
-    /// those widths.
+    /// These mappings have been tested against a physical SR3700P.
     pub fn from_detected_index(index: u8) -> Option<Self> {
         match index {
+            11 => Some(TapeWidth::Mm4),
             1 => Some(TapeWidth::Mm6),
+            2 => Some(TapeWidth::Mm9),
             3 => Some(TapeWidth::Mm12),
             4 => Some(TapeWidth::Mm18),
             5 => Some(TapeWidth::Mm24),
@@ -122,39 +132,39 @@ mod tests {
 
     #[test]
     fn width_byte_matches_captures() {
+        assert_eq!(TapeWidth::Mm4.width_byte(), 0x20);
         assert_eq!(TapeWidth::Mm6.width_byte(), 0x38);
+        assert_eq!(TapeWidth::Mm9.width_byte(), 0x50);
         assert_eq!(TapeWidth::Mm12.width_byte(), 0x70);
         assert_eq!(TapeWidth::Mm18.width_byte(), 0xA8);
-        assert_eq!(TapeWidth::Mm24.width_byte(), 0xE0);
+        assert_eq!(TapeWidth::Mm24.width_byte(), 0xC0);
     }
 
     #[test]
     fn bitmap_bytes_matches_captures() {
+        assert_eq!(TapeWidth::Mm4.bitmap_bytes(), 5);
         assert_eq!(TapeWidth::Mm6.bitmap_bytes(), 8);
+        assert_eq!(TapeWidth::Mm9.bitmap_bytes(), 11);
         assert_eq!(TapeWidth::Mm12.bitmap_bytes(), 15);
         assert_eq!(TapeWidth::Mm18.bitmap_bytes(), 22);
-        assert_eq!(TapeWidth::Mm24.bitmap_bytes(), 29);
+        assert_eq!(TapeWidth::Mm24.bitmap_bytes(), 25);
     }
 
     #[test]
     fn from_detected_index_matches_hardware() {
-        // Confirmed against real hardware with 6mm/12mm/18mm tapes loaded
+        // Tested against a physical SR3700P with each tape width loaded
         // (see docs/protocol.md section 1.5).
+        assert_eq!(TapeWidth::from_detected_index(11), Some(TapeWidth::Mm4));
         assert_eq!(TapeWidth::from_detected_index(1), Some(TapeWidth::Mm6));
+        assert_eq!(TapeWidth::from_detected_index(2), Some(TapeWidth::Mm9));
         assert_eq!(TapeWidth::from_detected_index(3), Some(TapeWidth::Mm12));
         assert_eq!(TapeWidth::from_detected_index(4), Some(TapeWidth::Mm18));
-    }
-
-    #[test]
-    fn from_detected_index_supports_experimental_24mm() {
         assert_eq!(TapeWidth::from_detected_index(5), Some(TapeWidth::Mm24));
     }
 
     #[test]
-    fn from_detected_index_rejects_unsupported_widths() {
-        // Indices 0 (4mm), 2 (9mm), 6 (36mm), 7 (50mm) are not yet
-        // implemented.
-        for index in [0, 2, 6, 7] {
+    fn from_detected_index_rejects_unknown_widths() {
+        for index in [0, 6, 7, 8, 9, 10, 12] {
             assert_eq!(TapeWidth::from_detected_index(index), None);
         }
     }

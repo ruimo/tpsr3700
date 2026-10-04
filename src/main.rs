@@ -95,7 +95,7 @@ struct Args {
     /// Text to print.
     text: String,
 
-    /// Tape width in millimeters (6, 12, 18, and experimental 24 are supported).
+    /// Tape width in millimeters (4, 6, 9, 12, 18, and 24 are supported).
     /// If omitted, the width is auto-detected by querying the printer
     /// (requires the printer to be connected; incompatible with
     /// --no-print).
@@ -183,12 +183,14 @@ fn main() -> Result<()> {
     };
 
     let tape = match args.tape_mm {
+        Some(4) => TapeWidth::Mm4,
         Some(6) => TapeWidth::Mm6,
+        Some(9) => TapeWidth::Mm9,
         Some(12) => TapeWidth::Mm12,
         Some(18) => TapeWidth::Mm18,
         Some(24) => TapeWidth::Mm24,
         Some(other) => {
-            anyhow::bail!("unsupported tape width: {other}mm (only 6, 12, 18, and experimental 24 are supported)")
+            anyhow::bail!("unsupported tape width: {other}mm (supported widths: 4, 6, 9, 12, 18, and 24)")
         }
         None => {
             let printer = printer
@@ -202,7 +204,7 @@ fn main() -> Result<()> {
                 }
                 None => anyhow::bail!(
                     "detected tape width index {index} from the printer, but this width \
-                     isn't supported yet (only 6, 12, 18, and experimental 24mm are); pass --tape-mm explicitly \
+                     isn't supported yet (supported widths: 4, 6, 9, 12, 18, and 24mm); pass --tape-mm explicitly \
                      if you know the width, or see docs/protocol.md section 1.5 for the index \
                      mapping"
                 ),
