@@ -104,11 +104,8 @@ required to print.
 ### 1.5 Detecting tape width
 
 The TEPRA desktop app has a "detect tape width" feature that queries
-the printer for the currently loaded tape's width, rather than relying
-on the user to select it manually. This is a single vendor-specific
-USB control transfer, captured via USBPcap on Windows
-(`captures/obtain-tape-width.pcap`) and confirmed against real
-hardware for three tape widths:
+the printer for the currently loaded tape's width. The query is a
+vendor-specific USB control transfer:
 
 ```
 bmRequestType = 0xC1  (Device-to-Host, Vendor, Interface)
@@ -118,43 +115,74 @@ wIndex        = 0x0000
 wLength       = 8
 ```
 
-The response is always 8 bytes long. Byte 3 (0-indexed) is a tape
-width *index*, not the width in mm directly:
 
-| Tape loaded | Response bytes (hex)      | Byte 3 (index) |
-|------------:|----------------------------|:---------------:|
-| 6mm         | `08 00 00 01 00 00 00 00`  | 1                |
-| 12mm        | `08 00 00 03 00 00 00 00`  | 3                |
-| 18mm        | `08 00 00 04 00 00 00 00`  | 4                |
+The response is 8 bytes long. Byte 3 (0-indexed) is a tape-width
+index. The following mapping has been tested on a physical SR3700P:
 
-These three index values (1, 3, 4) match exactly the position of each
-width in KING JIM's official TEPRA tape width lineup for this printer
-line, `[4, 6, 9, 12, 18, 24, 36, 50]` mm (0-indexed: 4mm→0, 6mm→1,
-9mm→2, 12mm→3, 18mm→4, 24mm→5, 36mm→6, 50mm→7; per KING JIM's product
-site). This strongly suggests the full mapping is:
+| Tape loaded | Byte 3 (index) |
+|------------:|:--------------:|
+| 4mm         | 11             |
+| 6mm         | 1              |
+| 9mm         | 2              |
+| 12mm        | 3              |
+| 18mm        | 4              |
+| 24mm        | 5              |
 
-| Index | Tape width |
-|:-----:|-----------:|
-| 0     | 4mm        |
-| 1     | 6mm        |
-| 2     | 9mm        |
-| 3     | 12mm       |
-| 4     | 18mm       |
-| 5     | 24mm       |
-| 6     | 36mm       |
-| 7     | 50mm       |
+In particular, 4mm uses index 11, so the index must not be inferred
+from the position of the width in KING JIM's tape-width lineup.
 
-Indices 0, 2, 6, and 7 (4mm, 9mm, 36mm, 50mm) are extrapolated from
-the lineup pattern and have **not** been confirmed against real hardware
-or a capture. Index 5 is treated as experimental 24mm support, while
-only 6mm, 12mm, and 18mm are fully verified end-to-end.
+Official KING JIM SPC USB traffic also shows that tape information may
+be queried twice in quick succession. This matters after changing a
+tape cartridge while the printer remains powered: on a physical
+SR3700P, the first query was observed to return the previous tape
+width, while a second query returned the newly loaded width.
 
-The meaning of the other 7 bytes in the response (always `08 00 00
-<idx> 00 00 00 00` in every observed sample) is unknown; byte 0 (`08`)
-is constant and does not vary with tape width, and might just be an
-echo of `wLength`. No sample with no tape loaded at all has been
-captured, so it's unknown whether/how that case is distinguished from
-a real width index.
+One observed 12mm -> 9mm transition was:
+
+
+```
+first response:  08 05 00 03 00 00 00 00
+second response: 08 00 00 02 00 00 00 00
+```
+Here byte 3 changed from 3 (12mm) to 2 (9mm). Repeating the query after
+a short delay therefore avoids using the stale width. Other cartridge
+changes were also observed to return the new width immediately on the
+first query.
+
+The meaning of the other response bytes is not fully understood.
+Byte 0 has been 0x08 in all observed responses. Byte 1 was 0x05 in
+the stale response above and 0x00 in the following current response,
+but the meaning of this field has not been established.
+
+### 1.6 Raster width measurements
+
+USB captures of official KING JIM SPC print jobs, together with the
+existing captured jobs, give the following raster parameters:
+
+| Tape width | Detect index | Raster width byte | Bitmap bytes | Bitmap bits |
+|-----------:|-------------:|------------------:|-------------:|------------:|
+| 4mm        | 11           | `0x20`            | 5            | 40          |
+| 6mm        | 1            | `0x38`            | 8            | 64          |
+| 9mm        | 2            | `0x50`            | 11           | 88          |
+| 12mm       | 3            | `0x70`            | 15           | 120         |
+| 18mm       | 4            | `0xA8`            | 22           | 176         |
+| 24mm       | 5            | `0xC0`            | 25           | 200         |
+
+The raster width byte must not be extrapolated from the nominal tape
+width. A relation inferred from the 6mm, 12mm, and 18mm captures does
+not hold for 4mm or 24mm.
+
+The bitmap size follows:
+
+
+```
+bitmap_bits = raster_width_byte + 8
+bitmap_bytes = bitmap_bits / 8
+```
+For 24mm tape this is particularly important: the measured width byte
+is `0xC0`, giving 200 bits (25 bytes) per raster row. The previously
+extrapolated `0xE0` value produced 232 bits (29 bytes) per row and
+caused clipping on a physical SR3700P.
 
 ## 2. Job byte stream format
 
@@ -209,12 +237,12 @@ leading `ESC {` and the `0x80` length byte):
 | Offset | Field                        | Notes |
 |-------:|-------------------------------|-------|
 | 0–2    | `1B 7B 80`                     | Frame start + fixed length marker |
-| 8      | Tape width in mm               | `0x06`=6mm, `0x0C`=12mm, `0x12`=18mm, `0x18`=experimental 24mm |
+| 8      | Tape width in mm               | `0x06`=6mm, `0x0C`=12mm, `0x12`=18mm, `0x18`=24mm |
 | 0x21   | `"SPC10"` (UTF-16LE)            | Unknown purpose; possibly a format/protocol version tag |
 | 0x61   | `"306"` (UTF-16LE)              | Unknown purpose |
 | 0x81   | `"obj_barcode\t\nprint_form\tGeneral\ncatalog_desc\t"` (ASCII) | Unknown purpose; looks like leftover template/object metadata from the desktop app's internal document model |
 | 20     | Grows by 4 per extra character  | `value = 12 + 4 * char_count`. Confirmed for char_count 1 and 2; likely related to some per-character/per-object table size, but the underlying table itself has not been located. |
-| 23     | Tape-width-dependent byte, unknown meaning | 6mm→3, 12mm→5, 18mm→6, experimental 24mm→7. No formula found relating it to tape width or bitmap size (see also 3.1) — kept as a hardcoded lookup table. |
+| 23     | Tape-width-dependent byte, unknown meaning | 6mm→3, 12mm→5, 18mm→6, 24mm→7 (provisional). No formula found relating it to tape width or bitmap size (see also 3.1) — kept as a hardcoded lookup table. |
 | 2177   | Checksum                       | `sum(bytes[3..2177]) mod 256` |
 | 2178   | `0x7D`                          | Frame end |
 
@@ -299,53 +327,68 @@ Implemented as `TRAILING_BYTE` + `build_command_frame(b'@', &[])` in
 
 ## 3. Tape width parameters
 
-Three tape widths have been captured and verified byte-for-byte: 6mm,
-12mm, and 18mm. 24mm support is experimental and extrapolated from the
-known raster formula plus a provisional header aux byte.
+Raster parameters are now known for all tape widths supported by the
+SR3700P: 4mm, 6mm, 9mm, 12mm, 18mm, and 24mm. The 4mm, 9mm, and 24mm
+values were measured from USB captures of official KING JIM SPC print
+jobs; the 6mm, 12mm, and 18mm values come from the existing captured
+print jobs.
 
 ### 3.1 Raster row width byte and bitmap size
 
 | Tape width | Header byte (offset 8) | Row `width_byte` | Bitmap size |
-|-----------:|:-----------------------:|:-----------------:|:-----------:|
-| 6mm        | `0x06`                  | `0x38` (56)        | 8 bytes (64 bits) |
-| 12mm       | `0x0C`                  | `0x70` (112)       | 15 bytes (120 bits) |
-| 18mm       | `0x12`                  | `0xA8` (168)       | 22 bytes (176 bits) |
-| 24mm       | `0x18`                  | `0xE0` (224)       | 29 bytes (232 bits), experimental |
+|-----------:|:-----------------------:|:----------------:|:-----------:|
+| 4mm        | `0x04`                  | `0x20` (32)      | 5 bytes (40 bits) |
+| 6mm        | `0x06`                  | `0x38` (56)      | 8 bytes (64 bits) |
+| 9mm        | `0x09`                  | `0x50` (80)      | 11 bytes (88 bits) |
+| 12mm       | `0x0C`                  | `0x70` (112)     | 15 bytes (120 bits) |
+| 18mm       | `0x12`                  | `0xA8` (168)     | 22 bytes (176 bits) |
+| 24mm       | `0x18`                  | `0xC0` (192)     | 25 bytes (200 bits) |
 
-These three data points fit two exact formulas:
+The bitmap size follows:
 
-```
-width_byte   = width_mm * 28 / 3
-bitmap_bits  = width_byte + 8
-bitmap_bytes = ceil(bitmap_bits / 8)
-```
+    bitmap_bits  = width_byte + 8
+    bitmap_bytes = bitmap_bits / 8
 
-Note that the bitmap size is **not** simply proportional to
-`width_mm` (that would predict 6mm/12mm/18mm to be in a 1:2:3 ratio,
-but 8/15/22 is not). The `width_byte * 28/3` relationship was only
-discovered after capturing the 12mm sample — with only 6mm and 18mm
-data points, a naive linear fit through the origin looked plausible
-but was wrong.
+The row width byte itself must be treated as a measured per-tape
+parameter rather than calculated from the nominal tape width.
 
-This formula is verified only for 6/12/18mm. 24mm currently uses the
-same formula experimentally; support for other widths (3.5mm, 9mm,
-36mm, etc., which the printer line is known to support) would need
-additional captures to confirm or refute it.
+The previously inferred relation
+
+    width_byte = width_mm * 28 / 3
+
+happens to match the 6mm, 12mm, and 18mm captures, but does not hold
+for 4mm or 24mm. In particular, extrapolating it to 24mm gives
+`0xE0` and 29 bitmap bytes, while an official SPC 24mm print job uses
+`0xC0` and 25 bitmap bytes. The extrapolated value caused clipping on
+a physical SR3700P; using the captured value fixed the clipping.
 
 ### 3.2 Header offset 23 ("aux byte")
 
-| Tape width | Value |
-|-----------:|------:|
-| 6mm        | 3     |
-| 12mm       | 5     |
-| 18mm       | 6     |
-| 24mm       | 7 (experimental) |
+The 2179-byte legacy header contains another tape-width-dependent byte
+at offset 23. Its meaning is still unknown.
 
-No formula relating this value to `width_mm`, `width_byte`, or the
-bitmap size has been found. It is stored as a hardcoded lookup table
-(`TapeWidth::aux_byte` in `src/tepra/mod.rs`) pending further data
-points. The 24mm value is provisional until confirmed by a captured 24mm
-job.
+| Tape width | Value | Status |
+|-----------:|------:|--------|
+| 4mm        | 0     | unknown; placeholder |
+| 6mm        | 3     | observed in captured legacy print job |
+| 9mm        | 0     | unknown; placeholder |
+| 12mm       | 5     | observed in captured legacy print job |
+| 18mm       | 6     | observed in captured legacy print job |
+| 24mm       | 7     | provisional |
+
+No formula relating this value to the tape width, raster width, or
+bitmap size has been established.
+
+The official SPC USB captures used to determine the 4mm, 9mm, and
+24mm raster dimensions use a different job format and therefore do
+not reveal this legacy header field. Values 0 for 4mm and 9mm are
+currently placeholders; both widths have nevertheless been printed
+successfully on a physical SR3700P with those values.
+
+The 24mm value 7 remains provisional for this legacy header field.
+Physical 24mm printing succeeds with the current implementation, but
+the value has not been independently confirmed from a captured legacy
+header.
 
 ## 4. Font size / point-to-pixel conversion
 
